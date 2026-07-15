@@ -1,0 +1,33 @@
+{
+  "root": "C:\\Users\\Administrator\\GP Agent\\workspace\\knowledge_base",
+  "organize_incoming": true,
+  "incoming_path": "_incoming",
+  "dry_run": false,
+  "folder_path": "",
+  "recursive": true,
+  "replace_existing": true,
+  "default_category": "未分类",
+  "default_domain": "通用",
+  "project_types": ["科研项目申报"],
+  "include_extensions": [".md", ".markdown", ".txt", ".docx", ".pdf", ".xlsx", ".xls", ".csv", ".tsv"],
+  "organize_extensions": [".md", ".markdown", ".txt", ".docx", ".pdf", ".xlsx", ".xls", ".csv", ".tsv"],
+  "incremental": true,
+  "user_id": "default",
+  "max_files": 200,
+  "classification_rules": [
+    {"name": "申报书模板", "keywords": ["模板", "填报说明", "格式要求"]},
+    {"name": "历史申报书", "keywords": ["申报书", "申请书", "项目申请", "立项依据", "任务书"]},
+    {"name": "国内外研究现状", "keywords": ["国内外研究现状", "研究现状", "国外研究", "国内研究"]},
+    {"name": "已有研究基础", "keywords": ["已有研究基础", "研究基础", "前期基础", "技术基础", "实验基础"]},
+    {"name": "团队成果", "keywords": ["团队成果", "论文", "专利", "软著", "标准", "奖励", "成果"]},
+    {"name": "政策指南", "keywords": ["指南", "申报通知", "通知", "管理办法", "评审规则", "资助办法"]},
+    {"name": "技术路线", "keywords": ["技术路线", "实施方案"]},
+    {"name": "创新点", "keywords": ["创新点", "创新"]},
+    {"name": "预算依据", "keywords": ["预算", "经费", "预算科目"]}
+  ],
+  "domain_rules": [
+    {"name": "路基工程", "keywords": ["路基", "填方", "压实", "回填", "道路", "公路"]},
+    {"name": "智能制造", "keywords": ["智能制造", "工业视觉", "机器视觉", "缺陷检测"]},
+    {"name": "人工智能", "keywords": ["人工智能", "大模型", "深度学习", "机器学习"]}
+  ]
+}

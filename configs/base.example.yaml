@@ -1,0 +1,39 @@
+# Minimal Agent Base configuration.
+#
+# Copy to config.yaml and add at least one model before starting the gateway.
+
+config_version: 11
+log_level: info
+
+models:
+  - name: default
+    display_name: Default Model
+    use: langchain_openai:ChatOpenAI
+    model: gpt-4.1
+    api_key: $OPENAI_API_KEY
+    request_timeout: 600.0
+    max_retries: 2
+    supports_vision: true
+    supports_thinking: false
+
+sandbox:
+  use: deerflow.sandbox.local:LocalSandboxProvider
+  allow_host_bash: false
+
+subagents:
+  enabled: true
+  max_concurrent_subagents: 3
+  max_turns: 8
+  timeout_seconds: 300
+
+memory:
+  enabled: false
+
+skills:
+  enabled: true
+
+tool_search:
+  enabled: true
+
+token_usage:
+  enabled: true

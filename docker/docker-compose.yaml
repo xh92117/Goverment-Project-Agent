@@ -1,0 +1,157 @@
+﻿# Agent Base Production Environment
+# Usage: make up
+#
+# Services:
+#   - nginx:       Reverse proxy (port 2026, configurable via PORT env var)
+#   - frontend:    Next.js production server
+#   - gateway:     FastAPI Gateway API + agent runtime
+#   - provisioner: (optional) Sandbox provisioner for Kubernetes mode
+#
+# Key environment variables (set via environment/.env or scripts/deploy.sh):
+#   AGENT_BASE_PROJECT_ROOT          - project root for relative runtime paths
+#   AGENT_BASE_HOME                  - runtime data dir, default .agent-base under $AGENT_BASE_PROJECT_ROOT (or cwd)
+#   AGENT_BASE_CONFIG_PATH           - path to config.yaml
+#   AGENT_BASE_EXTENSIONS_CONFIG_PATH - path to extensions_config.json
+#   AGENT_BASE_SKILLS_PATH           - skills dir, default $AGENT_BASE_PROJECT_ROOT/skills
+#   AGENT_BASE_DOCKER_SOCKET         - Docker socket path, default /var/run/docker.sock
+#   AGENT_BASE_REPO_ROOT             - repo root (used for skills host path in DooD)
+#   BETTER_AUTH_SECRET               — required for frontend auth/session security
+#   AGENT_BASE_INTERNAL_AUTH_TOKEN   - shared internal Gateway auth token for multi-worker IM channels
+#
+# LangSmith tracing is disabled by default (LANGSMITH_TRACING=false).
+# Set LANGSMITH_TRACING=true and LANGSMITH_API_KEY in .env to enable it.
+#
+# Access: http://localhost:${PORT:-2026}
+
+services:
+  # ── Reverse Proxy ──────────────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: agent-base-nginx
+    ports:
+      - "${PORT:-2026}:2026"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf.template:ro
+    command: >
+      sh -c "cp /etc/nginx/nginx.conf.template /etc/nginx/nginx.conf
+      && nginx -g 'daemon off;'"
+    depends_on:
+      - frontend
+      - gateway
+    networks:
+      - agent-base
+    restart: unless-stopped
+
+  # ── Frontend: Next.js Production ───────────────────────────────────────────
+  frontend:
+    build:
+      context: ../
+      dockerfile: frontend/Dockerfile
+      target: prod
+      args:
+        PNPM_STORE_PATH: ${PNPM_STORE_PATH:-/root/.local/share/pnpm/store}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+    container_name: agent-base-frontend
+    environment:
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - AGENT_BASE_INTERNAL_GATEWAY_BASE_URL=http://gateway:8001
+      - AGENT_BASE_TRUSTED_ORIGINS=${AGENT_BASE_TRUSTED_ORIGINS:-${DEER_FLOW_TRUSTED_ORIGINS:-http://localhost:2026,http://localhost:3000}}
+    env_file:
+      - ../frontend/.env
+    networks:
+      - agent-base
+    restart: unless-stopped
+
+  # ── Gateway API ────────────────────────────────────────────────────────────
+  gateway:
+    build:
+      context: ../
+      dockerfile: backend/Dockerfile
+      args:
+        APT_MIRROR: ${APT_MIRROR:-}
+        UV_IMAGE: ${UV_IMAGE:-ghcr.io/astral-sh/uv:0.7.20}
+        UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.org/simple}
+        UV_EXTRAS: ${UV_EXTRAS:-}
+    container_name: agent-base-gateway
+    command: sh -c "cd backend && PYTHONPATH=. uv run uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 --workers ${GATEWAY_WORKERS:-4}"
+    volumes:
+      - ${AGENT_BASE_CONFIG_PATH:-${DEER_FLOW_CONFIG_PATH}}:/app/backend/config.yaml:ro
+      - ${AGENT_BASE_EXTENSIONS_CONFIG_PATH:-${DEER_FLOW_EXTENSIONS_CONFIG_PATH}}:/app/backend/extensions_config.json:ro
+      - ../skills:/app/skills:ro
+      - ${AGENT_BASE_HOME}:/app/backend/.agent-base
+      # DooD: AioSandboxProvider starts sandbox containers via host Docker daemon
+      - ${AGENT_BASE_DOCKER_SOCKET:-${DEER_FLOW_DOCKER_SOCKET}}:/var/run/docker.sock
+      # CLI auth directories for auto-auth (Claude Code + Codex CLI)
+      - type: bind
+        source: ${HOME:?HOME must be set}/.claude
+        target: /root/.claude
+        read_only: true
+        bind:
+          create_host_path: true
+      - type: bind
+        source: ${HOME:?HOME must be set}/.codex
+        target: /root/.codex
+        read_only: true
+        bind:
+          create_host_path: true
+    working_dir: /app
+    environment:
+      - CI=true
+      - AGENT_BASE_PROJECT_ROOT=/app
+      - AGENT_BASE_HOME=/app/backend/.agent-base
+      - AGENT_BASE_CONFIG_PATH=/app/backend/config.yaml
+      - AGENT_BASE_EXTENSIONS_CONFIG_PATH=/app/backend/extensions_config.json
+      - AGENT_BASE_SKILLS_PATH=/app/skills
+      - AGENT_BASE_CHANNELS_LANGGRAPH_URL=${AGENT_BASE_CHANNELS_LANGGRAPH_URL:-${DEER_FLOW_CHANNELS_LANGGRAPH_URL:-http://gateway:8001/api}}
+      - AGENT_BASE_CHANNELS_GATEWAY_URL=${AGENT_BASE_CHANNELS_GATEWAY_URL:-${DEER_FLOW_CHANNELS_GATEWAY_URL:-http://gateway:8001}}
+      - AGENT_BASE_INTERNAL_AUTH_TOKEN=${AGENT_BASE_INTERNAL_AUTH_TOKEN}
+      # DooD path/network translation
+      - AGENT_BASE_HOST_BASE_DIR=${AGENT_BASE_HOME}
+      - AGENT_BASE_HOST_SKILLS_PATH=${AGENT_BASE_REPO_ROOT:-${DEER_FLOW_REPO_ROOT}}/skills
+      - AGENT_BASE_SANDBOX_HOST=host.docker.internal
+      # Proxy values (HTTP_PROXY/HTTPS_PROXY/ALL_PROXY) are inherited from ../.env via env_file.
+      # Only NO_PROXY is declared here so internal service hostnames are always exempt from the proxy.
+      - NO_PROXY=${NO_PROXY:-}${NO_PROXY:+,}localhost,127.0.0.1,::1,gateway,frontend,nginx,provisioner,host.docker.internal
+      - no_proxy=${no_proxy:-}${no_proxy:+,}localhost,127.0.0.1,::1,gateway,frontend,nginx,provisioner,host.docker.internal
+    env_file:
+      - ../.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - agent-base
+    restart: unless-stopped
+
+  # ── Sandbox Provisioner (optional, Kubernetes mode) ────────────────────────
+  provisioner:
+    build:
+      context: ./provisioner
+      dockerfile: Dockerfile
+      args:
+        APT_MIRROR: ${APT_MIRROR:-}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+    container_name: agent-base-provisioner
+    volumes:
+      - ~/.kube/config:/root/.kube/config:ro
+    environment:
+      - K8S_NAMESPACE=agent-base
+      - SANDBOX_IMAGE=enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
+      - SKILLS_HOST_PATH=${AGENT_BASE_REPO_ROOT:-${DEER_FLOW_REPO_ROOT}}/skills
+      - THREADS_HOST_PATH=${AGENT_BASE_HOME}/threads
+      - KUBECONFIG_PATH=/root/.kube/config
+      - NODE_HOST=host.docker.internal
+      - K8S_API_SERVER=https://host.docker.internal:26443
+    env_file:
+      - ../.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - agent-base
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+networks:
+  agent-base:
+    driver: bridge

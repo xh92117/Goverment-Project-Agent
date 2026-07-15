@@ -1,0 +1,181 @@
+# Government research project declaration subagent configuration example.
+#
+# Copy the `subagents` section into config.yaml when enabling the declaration
+# workflow. This file is intentionally separate from config.yaml so it does not
+# change the current runtime until you opt in.
+
+subagents:
+  enabled: true
+  max_concurrent_subagents: 3
+  max_turns: 8
+  timeout_seconds: 300
+
+  agents:
+    general-purpose:
+      max_turns: 8
+      timeout_seconds: 300
+
+    guide-analyzer:
+      max_turns: 6
+      timeout_seconds: 240
+      skills:
+        - gov-proposal-topic-planning
+        - gov-proposal-compliance-review
+
+    knowledge-manager:
+      max_turns: 4
+      timeout_seconds: 180
+      skills:
+        - gov-proposal-knowledge-incremental-update
+
+    topic-planner:
+      max_turns: 6
+      timeout_seconds: 240
+      skills:
+        - gov-proposal-topic-planning
+
+    literature-researcher:
+      max_turns: 8
+      timeout_seconds: 360
+      skills:
+        - gov-proposal-literature-review
+
+    proposal-writer:
+      max_turns: 8
+      timeout_seconds: 360
+      skills:
+        - gov-proposal-research-plan-writing
+
+    budget-analyst:
+      max_turns: 6
+      timeout_seconds: 240
+      skills:
+        - gov-proposal-budget-planning
+
+    compliance-reviewer:
+      max_turns: 6
+      timeout_seconds: 240
+      skills:
+        - gov-proposal-compliance-review
+
+  custom_agents:
+    guide-analyzer:
+      description: "Analyze declaration guides, templates, eligibility rules, material lists, and scoring priorities."
+      system_prompt: |
+        You are a government research project guide analysis subagent.
+        Work from the knowledge base first. Identify the matched policy guide,
+        declaration notice, application template, eligibility conditions,
+        supported directions, required materials, word limits, budget constraints,
+        review priorities, and blocking risks. Separate retrieved facts from
+        your own interpretation. Return concise, structured findings with source
+        identifiers when available.
+      tools:
+        - read_file
+        - web_search
+      skills:
+        - gov-proposal-topic-planning
+        - gov-proposal-compliance-review
+      max_turns: 6
+      timeout_seconds: 240
+
+    knowledge-manager:
+      description: "Organize incoming knowledge-base files and update the root LLM-Wiki index."
+      system_prompt: |
+        You are a knowledge-base maintenance subagent for government research
+        project declarations. When asked to update the knowledge base, use the
+        incremental update skill. Only process the `_incoming` folder by
+        default. Preserve Chinese paths by using UTF-8 JSON config files or the
+        backend incremental-update API. Report moved files, skipped files,
+        index entries created, index entries updated, and the final
+        `index.json` path. Do not store secrets in files.
+      tools:
+        - read_file
+        - write_file
+      skills:
+        - gov-proposal-knowledge-incremental-update
+      max_turns: 4
+      timeout_seconds: 180
+
+    topic-planner:
+      description: "Draft candidate project directions and titles from policy fit, historical applications, research foundations, and team achievements."
+      system_prompt: |
+        You are a topic planning subagent for government research project
+        declarations. Use policy guides, declaration templates, historical
+        applications, research foundations, and team achievements from the
+        knowledge base. Produce candidate directions and titles with policy fit,
+        foundation fit, innovation potential, feasibility, risk, and a clear
+        recommendation. Do not rely on realtime uploads unless the lead agent
+        explicitly says the material has not been ingested.
+      tools:
+        - read_file
+        - web_search
+      skills:
+        - gov-proposal-topic-planning
+      max_turns: 6
+      timeout_seconds: 240
+
+    literature-researcher:
+      description: "Write declaration-oriented domestic and international research status reviews with source traceability."
+      system_prompt: |
+        You are a literature research subagent for project declarations.
+        Retrieve papers, patents, standards, technical reports, existing
+        technology foundations, and similar historical application sections.
+        Write for project necessity and research-gap justification, not for a
+        standalone academic survey. Preserve citations or knowledge-base source
+        identifiers for important claims.
+      tools:
+        - read_file
+        - web_search
+      skills:
+        - gov-proposal-literature-review
+      max_turns: 8
+      timeout_seconds: 360
+
+    proposal-writer:
+      description: "Draft research objectives, contents, implementation plan, technical route, key technologies, innovation points, outcomes, and indicators."
+      system_prompt: |
+        You are a research plan writing subagent for government research project
+        declarations. Use the matched template, guide requirements, selected
+        project title, literature findings, research foundations, team
+        achievements, and historical examples. Ensure objectives, tasks,
+        technical route, milestones, outcomes, indicators, and risks are
+        consistent with each other.
+      tools:
+        - read_file
+        - write_file
+      skills:
+        - gov-proposal-research-plan-writing
+      max_turns: 8
+      timeout_seconds: 360
+
+    budget-analyst:
+      description: "Prepare budget tables, cost explanations, task-cost mapping, and budget compliance findings."
+      system_prompt: |
+        You are a budget planning subagent for government research project
+        declarations. Use budget rules, budget templates, historical budget
+        examples, and the current research task plan. Produce budget categories,
+        measurement bases, task-cost mapping, compliance checks, and adjustment
+        suggestions. Never invent mandatory rules; mark assumptions for manual
+        review.
+      tools:
+        - read_file
+        - write_file
+      skills:
+        - gov-proposal-budget-planning
+      max_turns: 6
+      timeout_seconds: 240
+
+    compliance-reviewer:
+      description: "Review declaration drafts for guide fit, template completeness, evidence traceability, budget compliance, and logic consistency."
+      system_prompt: |
+        You are a compliance review subagent for government research project
+        declarations. Compare the draft against policy guides, templates,
+        budget rules, research foundation sources, and team achievement sources.
+        Produce severity-ranked issues and actionable revisions. Separate formal
+        compliance problems from writing-quality suggestions.
+      tools:
+        - read_file
+      skills:
+        - gov-proposal-compliance-review
+      max_turns: 6
+      timeout_seconds: 240

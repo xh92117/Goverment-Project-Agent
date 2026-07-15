@@ -1,0 +1,110 @@
+/* ================= Icon Rail ================= */
+.icon-rail {
+  width: 48px;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: var(--c-bg-2);
+  border-right: 1px solid var(--c-border);
+  z-index: 10;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+/* Brand seal */
+.icon-rail-seal {
+  width: 36px;
+  height: 36px;
+  margin: var(--sp-2) auto 0;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--c-accent) 0%, var(--c-accent-2) 100%);
+  color: var(--c-primary-contrast);
+  display: grid;
+  place-items: center;
+  text-decoration: none;
+  flex-shrink: 0;
+  position: relative;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15), inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  transition: transform 0.15s;
+}
+
+.icon-rail-seal:hover {
+  transform: scale(1.05);
+}
+
+.icon-rail-seal-text {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1;
+}
+
+/* Divider */
+.icon-rail-divider {
+  width: 28px;
+  height: 1px;
+  background: var(--c-border);
+  margin: var(--sp-2) 0;
+  flex-shrink: 0;
+}
+
+/* Navigation area */
+.icon-rail-nav {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0 var(--sp-1);
+  overflow-y: auto;
+  width: 100%;
+}
+
+/* Secondary area (bottom) */
+.icon-rail-secondary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 0 var(--sp-1) var(--sp-2);
+  width: 100%;
+  flex-shrink: 0;
+}
+
+/* Individual item */
+.icon-rail-item {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-md);
+  color: var(--c-muted);
+  cursor: pointer;
+  position: relative;
+  transition: all 0.15s;
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.icon-rail-item:hover {
+  background: var(--c-bg);
+  color: var(--c-ink-2);
+}
+
+.icon-rail-item.active {
+  background: var(--c-primary-50);
+  color: var(--c-accent);
+}
+
+/* Active indicator dot */
+.icon-rail-indicator {
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 18px;
+  border-radius: 0 2px 2px 0;
+  background: var(--c-accent);
+}

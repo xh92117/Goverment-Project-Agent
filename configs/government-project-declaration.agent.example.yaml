@@ -1,0 +1,23 @@
+# Example custom-agent config for a government research project declaration agent.
+#
+# This is a template for an agent directory's config.yaml, not the root
+# application config.yaml. A matching SOUL.md should live beside it.
+
+name: government-project-declaration
+description: Knowledge-base-driven assistant for government research project declaration writing.
+model: null
+workspace_path: "C:\\Users\\Administrator\\GP Agent\\workspace"
+tool_groups:
+  - filesystem
+# Built-in knowledge tools are always available to the agent:
+# - knowledge_search_index
+# - knowledge_read_file
+# - knowledge_incremental_update
+# - proposal_save_markdown
+skills:
+  - gov-proposal-knowledge-incremental-update
+  - gov-proposal-topic-planning
+  - gov-proposal-literature-review
+  - gov-proposal-research-plan-writing
+  - gov-proposal-budget-planning
+  - gov-proposal-compliance-review

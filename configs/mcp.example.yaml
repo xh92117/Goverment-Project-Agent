@@ -1,0 +1,13 @@
+# MCP extension configuration examples.
+#
+# Keep this content in extensions_config.json when enabling external tools.
+
+mcpServers:
+  example-filesystem:
+    enabled: false
+    type: stdio
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-filesystem"
+      - "."
