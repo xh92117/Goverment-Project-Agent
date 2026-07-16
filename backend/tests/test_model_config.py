@@ -249,9 +249,7 @@ models:
 
     def fake_reload(path):
         data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        return SimpleNamespace(
-            models=[ModelConfig(**model) for model in data["models"]]
-        )
+        return SimpleNamespace(models=[ModelConfig(**model) for model in data["models"]])
 
     monkeypatch.setattr(models_router, "reload_app_config", fake_reload)
 
@@ -280,6 +278,223 @@ models:
     versions_dir = runtime_home / "model_config_versions"
     assert len(list(versions_dir.glob("*.yaml"))) == 1
     assert len(list(versions_dir.glob("*.json"))) == 1
+
+
+def test_create_model_configuration_writes_literal_api_key_to_env(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import anyio
+    import yaml
+
+    from app.gateway.env_file import read_env_file
+    from app.gateway.routers import models as models_router
+
+    runtime_home = tmp_path / "runtime"
+    monkeypatch.setenv("AGENT_BASE_HOME", str(runtime_home))
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: existing
+    use: langchain_openai:ChatOpenAI
+    model: existing-model
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        models_router.AppConfig,
+        "resolve_config_path",
+        staticmethod(lambda: config_path),
+    )
+
+    def fake_reload(path):
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        return SimpleNamespace(models=[ModelConfig(**model) for model in data["models"]])
+
+    monkeypatch.setattr(models_router, "reload_app_config", fake_reload)
+
+    secret = "dashscope-secret-for-test"
+    body = models_router.ManagedModelCreateRequest(
+        model_name="qwen-plus",
+        provider="qwen",
+        api_key=secret,
+    )
+    result = anyio.run(
+        models_router.create_model_configuration,
+        _admin_request(),
+        body,
+    )
+
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved["models"][1]["api_key"] == "$DASHSCOPE_API_KEY"
+    assert read_env_file(tmp_path / ".env")["DASHSCOPE_API_KEY"] == secret
+    assert models_router.os.environ["DASHSCOPE_API_KEY"] == secret
+    assert result.models[1].api_key == "***"
+    assert secret not in config_path.read_text(encoding="utf-8")
+
+
+def test_update_model_configuration_replaces_env_secret_without_exposing_it(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import anyio
+    import yaml
+
+    from app.gateway.env_file import read_env_file
+    from app.gateway.routers import models as models_router
+
+    runtime_home = tmp_path / "runtime"
+    monkeypatch.setenv("AGENT_BASE_HOME", str(runtime_home))
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: qwen
+    provider: qwen
+    use: langchain_openai:ChatOpenAI
+    model: qwen-plus
+    api_key: $DASHSCOPE_API_KEY
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text("DASHSCOPE_API_KEY=old-secret\n", encoding="utf-8")
+    monkeypatch.setattr(
+        models_router.AppConfig,
+        "resolve_config_path",
+        staticmethod(lambda: config_path),
+    )
+
+    def fake_reload(path):
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        return SimpleNamespace(models=[ModelConfig(**model) for model in data["models"]])
+
+    monkeypatch.setattr(models_router, "reload_app_config", fake_reload)
+
+    new_secret = "new-dashscope-secret"
+    body = models_router.ManagedModelConfig(
+        name="qwen",
+        provider="qwen",
+        use="langchain_openai:ChatOpenAI",
+        model="qwen-max",
+        api_key=new_secret,
+    )
+    anyio.run(
+        models_router.update_model_configuration,
+        _admin_request(),
+        "qwen",
+        body,
+    )
+
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved["models"][0]["api_key"] == "$DASHSCOPE_API_KEY"
+    assert read_env_file(tmp_path / ".env")["DASHSCOPE_API_KEY"] == new_secret
+    assert new_secret not in config_path.read_text(encoding="utf-8")
+    snapshot_text = next((runtime_home / "model_config_versions").glob("*.yaml")).read_text(encoding="utf-8")
+    assert new_secret not in snapshot_text
+    assert "old-secret" not in snapshot_text
+
+
+def test_omitted_api_key_preserves_existing_env_reference(tmp_path):
+    from app.gateway.routers import models as models_router
+
+    existing = {
+        "name": "qwen",
+        "provider": "qwen",
+        "model": "qwen-plus",
+        "api_key": "$DASHSCOPE_API_KEY",
+    }
+    updated = dict(existing)
+
+    models_router._externalize_model_api_key(
+        tmp_path / "config.yaml",
+        updated,
+        None,
+        existing=existing,
+    )
+
+    assert updated["api_key"] == "$DASHSCOPE_API_KEY"
+    assert not (tmp_path / ".env").exists()
+
+
+def test_model_change_migrates_legacy_plaintext_key_before_snapshot(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import anyio
+    import yaml
+
+    from app.gateway.env_file import read_env_file
+    from app.gateway.routers import models as models_router
+
+    runtime_home = tmp_path / "runtime"
+    monkeypatch.setenv("AGENT_BASE_HOME", str(runtime_home))
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    config_path = tmp_path / "config.yaml"
+    legacy_secret = "legacy-plaintext-secret"
+    config_path.write_text(
+        f"""
+models:
+  - name: qwen
+    provider: qwen
+    use: langchain_openai:ChatOpenAI
+    model: qwen-plus
+    api_key: {legacy_secret}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        models_router.AppConfig,
+        "resolve_config_path",
+        staticmethod(lambda: config_path),
+    )
+
+    def fake_reload(path):
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        return SimpleNamespace(models=[ModelConfig(**model) for model in data["models"]])
+
+    monkeypatch.setattr(models_router, "reload_app_config", fake_reload)
+
+    body = models_router.ManagedModelCreateRequest(
+        model_name="local-model",
+        provider="ollama",
+    )
+    anyio.run(
+        models_router.create_model_configuration,
+        _admin_request(),
+        body,
+    )
+
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved["models"][0]["api_key"] == "$DASHSCOPE_API_KEY"
+    assert read_env_file(tmp_path / ".env")["DASHSCOPE_API_KEY"] == legacy_secret
+    assert legacy_secret not in config_path.read_text(encoding="utf-8")
+    snapshot_text = next((runtime_home / "model_config_versions").glob("*.yaml")).read_text(encoding="utf-8")
+    assert "$DASHSCOPE_API_KEY" in snapshot_text
+    assert legacy_secret not in snapshot_text
+
+
+def test_snapshot_drops_unmigrated_plaintext_api_key(tmp_path, monkeypatch):
+    import yaml
+
+    from app.gateway.routers import models as models_router
+
+    runtime_home = tmp_path / "runtime"
+    monkeypatch.setenv("AGENT_BASE_HOME", str(runtime_home))
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+models:
+  - name: unsafe
+    use: langchain_openai:ChatOpenAI
+    model: unsafe-model
+    api_key: plaintext-secret
+""",
+        encoding="utf-8",
+    )
+
+    version = models_router._create_model_config_snapshot(config_path, "manual")
+
+    snapshot = yaml.safe_load((runtime_home / "model_config_versions" / f"{version.id}.yaml").read_text(encoding="utf-8"))
+    assert "api_key" not in snapshot["models"][0]
 
 
 def test_delete_model_configuration_rejects_last_model(tmp_path, monkeypatch):
@@ -352,9 +567,7 @@ models:
 
     def fake_reload(path):
         data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        return SimpleNamespace(
-            models=[ModelConfig(**model) for model in data["models"]]
-        )
+        return SimpleNamespace(models=[ModelConfig(**model) for model in data["models"]])
 
     monkeypatch.setattr(models_router, "reload_app_config", fake_reload)
 

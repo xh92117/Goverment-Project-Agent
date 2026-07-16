@@ -1,11 +1,11 @@
 import os
-import re
 from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.gateway.env_file import env_path_for_config, read_env_file, write_env_values
 from app.gateway.routers.models import _load_raw_config, _require_admin_user, _write_raw_config
 from deerflow.config.app_config import AppConfig, reload_app_config
 
@@ -21,7 +21,6 @@ _MINERU_ENV_KEYS = {
     "poll_interval_seconds": "MINERU_POLL_INTERVAL_SECONDS",
     "max_wait_seconds": "MINERU_MAX_WAIT_SECONDS",
 }
-_SAFE_ENV_VALUE_RE = re.compile(r"^[A-Za-z0-9_./:@%+=,\-]+$")
 
 
 class PdfParserSettingsResponse(BaseModel):
@@ -103,82 +102,6 @@ class KnowledgeImageModelSettingsUpdate(BaseModel):
         return value.strip() or None
 
 
-def _env_path_for_config(config_path: Path) -> Path:
-    return config_path.parent / ".env"
-
-
-def _parse_env_value(raw: str) -> str:
-    value = raw.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        value = value[1:-1]
-        if raw.strip().startswith('"'):
-            value = value.replace(r"\"", '"').replace(r"\\", "\\")
-    return value
-
-
-def _read_env_file(env_path: Path) -> dict[str, str]:
-    if not env_path.exists():
-        return {}
-    values: dict[str, str] = {}
-    for raw_line in env_path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("export "):
-            line = line.removeprefix("export ").lstrip()
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        if key:
-            values[key] = _parse_env_value(value)
-    return values
-
-
-def _format_env_value(value: str) -> str:
-    if "\n" in value or "\r" in value:
-        raise HTTPException(status_code=400, detail="Environment values cannot contain newlines")
-    if value and _SAFE_ENV_VALUE_RE.fullmatch(value):
-        return value
-    return '"' + value.replace("\\", "\\\\").replace('"', r"\"") + '"'
-
-
-def _write_env_values(env_path: Path, updates: dict[str, str | None]) -> None:
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    existing_lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
-    seen: set[str] = set()
-    output: list[str] = []
-
-    for raw_line in existing_lines:
-        stripped = raw_line.strip()
-        prefix = ""
-        line = stripped
-        if line.startswith("export "):
-            prefix = "export "
-            line = line.removeprefix("export ").lstrip()
-        if not line or line.startswith("#") or "=" not in line:
-            output.append(raw_line)
-            continue
-
-        key = line.split("=", 1)[0].strip()
-        if key not in updates:
-            output.append(raw_line)
-            continue
-
-        seen.add(key)
-        value = updates[key]
-        if value is None:
-            continue
-        output.append(f"{prefix}{key}={_format_env_value(value)}")
-
-    for key, value in updates.items():
-        if key in seen or value is None:
-            continue
-        output.append(f"{key}={_format_env_value(value)}")
-
-    env_path.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
-
-
 def _env_value(env_values: dict[str, str], key: str, default: str) -> str:
     value = env_values.get(key)
     if value is None:
@@ -234,7 +157,7 @@ def _knowledge_image_model_settings_response(data: dict) -> KnowledgeImageModelS
 
 def _settings_response(config_path: Path, env_path: Path) -> PdfParserSettingsResponse:
     data = _load_raw_config(config_path)
-    env_values = _read_env_file(env_path)
+    env_values = read_env_file(env_path)
     token = env_values.get(_MINERU_ENV_KEYS["api_token"]) or os.environ.get(_MINERU_ENV_KEYS["api_token"], "")
     token_configured = bool(token.strip())
     return PdfParserSettingsResponse(
@@ -261,7 +184,7 @@ def _settings_response(config_path: Path, env_path: Path) -> PdfParserSettingsRe
 async def get_pdf_parser_settings(request: Request) -> PdfParserSettingsResponse:
     await _require_admin_user(request)
     config_path = AppConfig.resolve_config_path()
-    return _settings_response(config_path, _env_path_for_config(config_path))
+    return _settings_response(config_path, env_path_for_config(config_path))
 
 
 @router.put(
@@ -276,8 +199,8 @@ async def update_pdf_parser_settings(
 ) -> PdfParserSettingsResponse:
     await _require_admin_user(request)
     config_path = AppConfig.resolve_config_path()
-    env_path = _env_path_for_config(config_path)
-    env_values = _read_env_file(env_path)
+    env_path = env_path_for_config(config_path)
+    env_values = read_env_file(env_path)
 
     existing_token = env_values.get(_MINERU_ENV_KEYS["api_token"]) or os.environ.get(_MINERU_ENV_KEYS["api_token"], "")
     incoming_token = (body.api_token or "").strip()
@@ -297,7 +220,7 @@ async def update_pdf_parser_settings(
         _MINERU_ENV_KEYS["poll_interval_seconds"]: f"{body.poll_interval_seconds:g}",
         _MINERU_ENV_KEYS["max_wait_seconds"]: f"{body.max_wait_seconds:g}",
     }
-    _write_env_values(env_path, env_updates)
+    write_env_values(env_path, env_updates)
 
     for key, value in env_updates.items():
         if value is None:
