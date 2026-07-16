@@ -1,4 +1,4 @@
-# Agent Base - Unified Development Environment
+# Government Project Declaration Agent - Unified Development Environment
 
 .PHONY: help config config-upgrade check ci ci-backend-light ci-backend-lint ci-frontend ci-docker-smoke live-smoke-chat live-smoke-subagent install setup doctor detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway
 
@@ -19,7 +19,7 @@ else
 endif
 
 help:
-	@echo "Agent Base Development Commands:"
+	@echo Government Project Declaration Agent Commands:
 	@echo "  make setup           - Interactive setup wizard (recommended for new users)"
 	@echo "  make doctor          - Check configuration and system requirements"
 	@echo "  make config          - Generate local config files (aborts if config already exists)"
@@ -99,23 +99,18 @@ live-smoke-subagent:
 
 # Install all dependencies
 install:
-	@echo "Installing backend dependencies..."
-	@echo "  Using uv project environment under .venv"
-	@$(BACKEND_UV_SYNC)
-	@echo "Installing frontend dependencies..."
-	@echo "  Using frontend dependencies under .venv/frontend/node_modules"
-	@cd frontend && pnpm install
-	@echo "Installing pre-commit hooks..."
-	@$(BACKEND_UV_RUN) --with pre-commit pre-commit install
-	@echo "✓ All dependencies installed"
-	@echo ""
-	@echo "=========================================="
-	@echo "  Optional: Pre-pull Sandbox Image"
-	@echo "=========================================="
-	@echo ""
-	@echo "If you plan to use Docker/Container-based sandbox, you can pre-pull the image:"
-	@echo "  make setup-sandbox"
-	@echo ""
+	@echo ==================================================
+	@echo Government Project Declaration Agent Installation
+	@echo ==================================================
+	@echo [1/3] Installing backend dependencies into .venv...
+	@$(BACKEND_UV_SYNC) --quiet --link-mode copy
+	@echo [2/3] Installing frontend dependencies into frontend/node_modules...
+	@$(PYTHON) ./scripts/prepare_frontend_install.py
+	@cd frontend && pnpm install --frozen-lockfile --reporter=append-only
+	@echo [3/3] Installing local pre-commit hooks...
+	@$(BACKEND_UV_RUN) --quiet --with pre-commit pre-commit install
+	@echo Installation completed successfully.
+	@echo Optional container sandbox command: make setup-sandbox
 
 # Pre-pull sandbox Docker image (optional but recommended)
 setup-sandbox:
