@@ -185,6 +185,41 @@ Pop-Location
 `.venv/pnpm-store`。项目已启用复制与提升模式，以减少 Windows 因符号链接权限导致的
 `ERR_PNPM_EPERM` 安装失败。
 
+如果访问 npm 官方源较慢，可以通过本地 HTTP 或 Mixed 代理安装。以下示例使用
+`127.0.0.1:7890`，请按代理软件的实际监听端口修改：
+
+```powershell
+pnpm config set proxy "http://127.0.0.1:7890"
+pnpm config set https-proxy "http://127.0.0.1:7890"
+pnpm config set registry "https://registry.npmjs.org"
+
+pnpm config get proxy
+pnpm config get https-proxy
+pnpm install --frozen-lockfile
+```
+
+即使 npm 源使用 HTTPS，代理地址通常仍写为 `http://`，由代理通过 HTTP CONNECT
+建立 HTTPS 隧道。安装完成后如不再使用代理，可清除持久配置：
+
+```powershell
+pnpm config delete proxy
+pnpm config delete https-proxy
+```
+
+如只想让代理在当前 PowerShell 窗口中临时生效，可以改用环境变量：
+
+```powershell
+$env:HTTP_PROXY = "http://127.0.0.1:7890"
+$env:HTTPS_PROXY = "http://127.0.0.1:7890"
+
+pnpm install --frozen-lockfile
+
+Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
+Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
+```
+
+建议使用代理软件提供的 HTTP 或 Mixed 端口；pnpm 不应直接配置为仅支持 SOCKS 的端口。
+
 如果已安装 Make，也可以用以下命令安装基础依赖：
 
 ```powershell
