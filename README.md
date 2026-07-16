@@ -47,7 +47,6 @@ Goverment-Project-Agent/
 └─ LICENSE                   MIT 许可证
 ```
 
-
 默认运行数据与源码分离。当前启动脚本的默认目录为：
 
 ```text
@@ -59,6 +58,7 @@ C:\Users\users name\GP Agent
    └─ logs\                  运行日志
 
 ```
+
 ## 3. 环境要求
 
 推荐使用 Windows 10/11 和 PowerShell。项目的本地一键启动脚本已按 Windows 环境优化。
@@ -250,6 +250,10 @@ Copy-Item ".\extensions_config.example.json" ".\extensions_config.json"
 ### 4.6 配置模型
 
 真实 API Key 只写入 `.env`，不要直接提交到 `config.yaml` 或 GitHub。
+
+通过前端“设置 → 模型供应商”新增或更新模型时，后端也遵循同一规则：真实密钥写入
+项目根目录 `.env`，`config.yaml` 的模型条目只保存 `$环境变量名` 引用。模型配置历史
+快照不会保存明文密钥。
 
 DeepSeek 最小示例：
 
