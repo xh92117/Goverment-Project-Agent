@@ -1,8 +1,9 @@
 import asyncio
 import json
+import os
 import re
-import shutil
 import time
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.gateway.config import get_gateway_config
 from app.gateway.deps import get_config
+from app.gateway.env_file import env_path_for_config, read_env_file, write_env_values
 from deerflow.config.app_config import AppConfig, reload_app_config
 from deerflow.config.runtime_paths import runtime_home
 from deerflow.models import create_chat_model
@@ -165,6 +167,8 @@ _SECRET_PATTERNS = (
 _MASKED_VALUE = "***"
 _DEFAULT_MANAGED_MODEL_PROVIDER = "langchain_openai:ChatOpenAI"
 _MODEL_NAME_SAFE_PATTERN = re.compile(r"[^A-Za-z0-9_.-]+")
+_ENV_REFERENCE_PATTERN = re.compile(r"^\$([A-Z_][A-Z0-9_]*)$")
+_ENV_NAME_UNSAFE_PATTERN = re.compile(r"[^A-Z0-9_]+")
 _PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
     "deepseek": {
         "url": "https://api.deepseek.com/v1",
@@ -188,6 +192,23 @@ _PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
     "openrouter": {"url": "https://openrouter.ai/api/v1", "use": "langchain_openai:ChatOpenAI"},
     "ollama": {"url": "http://127.0.0.1:11434/v1", "use": "langchain_openai:ChatOpenAI"},
     "mimo": {"url": "https://api.xiaomimimo.com/v1", "use": "deerflow.models.patched_mimo:PatchedChatMiMo"},
+}
+_PROVIDER_API_KEY_ENV = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "baidu": "QIANFAN_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "google": "GEMINI_API_KEY",
+    "minimax": "MINIMAX_API_KEY",
+    "mimo": "MIMO_API_KEY",
+    "moonshot": "MOONSHOT_API_KEY",
+    "ollama": "OLLAMA_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "qwen": "DASHSCOPE_API_KEY",
+    "siliconflow": "SILICONFLOW_API_KEY",
+    "tencent": "HUNYUAN_API_KEY",
+    "volcengine": "VOLCENGINE_API_KEY",
+    "zhipu": "ZHIPU_API_KEY",
 }
 _MANAGED_MODEL_FIELDS = {
     "name",
@@ -292,6 +313,117 @@ def _clean_optional_text(value: str | None) -> str | None:
     return stripped or None
 
 
+def _env_reference_name(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    match = _ENV_REFERENCE_PATTERN.fullmatch(value.strip())
+    return match.group(1) if match else None
+
+
+def _infer_model_provider(model: dict[str, Any]) -> str | None:
+    provider = _clean_optional_text(str(model.get("provider") or ""))
+    if provider:
+        return provider.lower()
+    signature = " ".join(str(model.get(field) or "").lower() for field in ("name", "model", "use", "base_url", "api_base"))
+    for candidate in _PROVIDER_API_KEY_ENV:
+        if candidate in signature:
+            return candidate
+    if "dashscope" in signature:
+        return "qwen"
+    if "bigmodel" in signature:
+        return "zhipu"
+    return None
+
+
+def _model_specific_api_key_env(model: dict[str, Any]) -> str:
+    raw_name = str(model.get("name") or model.get("model") or "CUSTOM_MODEL").upper()
+    safe_name = _ENV_NAME_UNSAFE_PATTERN.sub("_", raw_name).strip("_") or "CUSTOM_MODEL"
+    return f"MODEL_{safe_name}_API_KEY"
+
+
+def _select_api_key_env_name(
+    model: dict[str, Any],
+    secret: str,
+    env_values: dict[str, str],
+    *,
+    preferred: str | None = None,
+) -> str:
+    candidate = preferred
+    if candidate is None:
+        provider = _infer_model_provider(model)
+        candidate = _PROVIDER_API_KEY_ENV.get(provider or "") or _model_specific_api_key_env(model)
+
+    existing_value = env_values.get(candidate)
+    if existing_value is None:
+        existing_value = os.environ.get(candidate)
+    if preferred is not None or existing_value in (None, "", secret):
+        return candidate
+
+    base_name = _model_specific_api_key_env(model)
+    candidate = base_name
+    suffix = 1
+    while True:
+        existing_value = env_values.get(candidate)
+        if existing_value is None:
+            existing_value = os.environ.get(candidate)
+        if existing_value in (None, "", secret):
+            return candidate
+        suffix += 1
+        candidate = f"{base_name}_{suffix}"
+
+
+def _externalize_model_api_key(
+    config_path: Path,
+    model: dict[str, Any],
+    requested_api_key: str | None,
+    *,
+    existing: dict[str, Any] | None = None,
+) -> None:
+    if requested_api_key == _MASKED_VALUE or (requested_api_key is None and existing is not None):
+        value = (existing or {}).get("api_key")
+    else:
+        value = requested_api_key
+
+    if value in (None, ""):
+        model.pop("api_key", None)
+        return
+
+    value = str(value).strip()
+    reference_name = _env_reference_name(value)
+    if reference_name:
+        model["api_key"] = f"${reference_name}"
+        return
+
+    existing_reference = None
+    if requested_api_key != _MASKED_VALUE:
+        existing_reference = _env_reference_name((existing or {}).get("api_key"))
+    env_path = env_path_for_config(config_path)
+    env_values = read_env_file(env_path)
+    env_name = _select_api_key_env_name(
+        model,
+        value,
+        env_values,
+        preferred=existing_reference,
+    )
+    write_env_values(env_path, {env_name: value})
+    os.environ[env_name] = value
+    model["api_key"] = f"${env_name}"
+
+
+def _externalize_existing_model_api_keys(config_path: Path, data: dict[str, Any]) -> None:
+    for model in _raw_models(data):
+        if not isinstance(model, dict):
+            continue
+        value = model.get("api_key")
+        if value and not _env_reference_name(value):
+            _externalize_model_api_key(
+                config_path,
+                model,
+                _MASKED_VALUE,
+                existing=model,
+            )
+
+
 def _model_name_slug(value: str | None) -> str:
     cleaned = _clean_optional_text(value)
     if not cleaned:
@@ -301,11 +433,7 @@ def _model_name_slug(value: str | None) -> str:
 
 
 def _next_available_model_name(base_name: str, models: list[dict[str, Any]]) -> str:
-    existing = {
-        str(model.get("name"))
-        for model in models
-        if isinstance(model, dict) and model.get("name")
-    }
+    existing = {str(model.get("name")) for model in models if isinstance(model, dict) and model.get("name")}
     if base_name not in existing:
         return base_name
     suffix = 2
@@ -378,9 +506,17 @@ def _snapshot_reason_slug(reason: str) -> str:
     return slug or "model-config-change"
 
 
-def _create_model_config_snapshot(config_path: Path, reason: str) -> ModelConfigVersion:
-    data = _load_raw_config(config_path)
-    model_count = len([model for model in _raw_models(data) if isinstance(model, dict)])
+def _create_model_config_snapshot(
+    config_path: Path,
+    reason: str,
+    *,
+    data: dict[str, Any] | None = None,
+) -> ModelConfigVersion:
+    snapshot_data = deepcopy(data if data is not None else _load_raw_config(config_path))
+    for model in _raw_models(snapshot_data):
+        if isinstance(model, dict) and model.get("api_key") and not _env_reference_name(model["api_key"]):
+            model.pop("api_key", None)
+    model_count = len([model for model in _raw_models(snapshot_data) if isinstance(model, dict)])
     created_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     base_version_id = f"{timestamp}_{_snapshot_reason_slug(reason)}"
@@ -391,7 +527,7 @@ def _create_model_config_snapshot(config_path: Path, reason: str) -> ModelConfig
     while (versions_dir / f"{version_id}.yaml").exists() or (versions_dir / f"{version_id}.json").exists():
         suffix += 1
         version_id = f"{base_version_id}.{suffix}"
-    shutil.copyfile(config_path, versions_dir / f"{version_id}.yaml")
+    _write_raw_config(versions_dir / f"{version_id}.yaml", snapshot_data)
     version = ModelConfigVersion(
         id=version_id,
         created_at=created_at,
@@ -534,12 +670,7 @@ def _build_model_config_diff(
 
 
 def _managed_models_from_app_config(config: AppConfig) -> ManagedModelsResponse:
-    return ManagedModelsResponse(
-        models=[
-            _managed_model_from_raw(model.model_dump(exclude_none=True))
-            for model in config.models
-        ]
-    )
+    return ManagedModelsResponse(models=[_managed_model_from_raw(model.model_dump(exclude_none=True)) for model in config.models])
 
 
 def _sanitize_model_test_error(error: BaseException) -> str:
@@ -661,11 +792,7 @@ async def list_model_configuration(request: Request) -> ManagedModelsResponse:
     await _require_admin_user(request)
     config_path = AppConfig.resolve_config_path()
     data = _load_raw_config(config_path)
-    models = [
-        _managed_model_from_raw(model)
-        for model in _raw_models(data)
-        if isinstance(model, dict)
-    ]
+    models = [_managed_model_from_raw(model) for model in _raw_models(data) if isinstance(model, dict)]
     return ManagedModelsResponse(models=models)
 
 
@@ -673,7 +800,7 @@ async def list_model_configuration(request: Request) -> ManagedModelsResponse:
     "/models/config",
     response_model=ManagedModelsResponse,
     summary="Create Model Configuration",
-    description="Create a new model configuration entry in config.yaml.",
+    description="Create a model in config.yaml and store any submitted API key in .env.",
 )
 async def create_model_configuration(
     request: Request,
@@ -682,10 +809,21 @@ async def create_model_configuration(
     await _require_admin_user(request)
     config_path = AppConfig.resolve_config_path()
     data = _load_raw_config(config_path)
+    _externalize_existing_model_api_keys(config_path, data)
     models = _raw_models(data)
     model = _managed_model_from_create_request(body, existing_models=models)
-    _create_model_config_snapshot(config_path, f"before_create_model:{model.name}")
-    models.append(_raw_model_from_managed(model))
+    _create_model_config_snapshot(
+        config_path,
+        f"before_create_model:{model.name}",
+        data=data,
+    )
+    raw_model = _raw_model_from_managed(model)
+    _externalize_model_api_key(
+        config_path,
+        raw_model,
+        model.api_key,
+    )
+    models.append(raw_model)
     _write_raw_config(config_path, data)
     reloaded = reload_app_config(str(config_path))
     return _managed_models_from_app_config(reloaded)
@@ -695,7 +833,7 @@ async def create_model_configuration(
     "/models/config/{model_name}",
     response_model=ManagedModelsResponse,
     summary="Update Model Configuration",
-    description="Update an existing model configuration entry in config.yaml.",
+    description="Update a model in config.yaml and store any submitted API key in .env.",
 )
 async def update_model_configuration(
     request: Request,
@@ -712,9 +850,21 @@ async def update_model_configuration(
     renamed_index = _find_model_index(models, body.name)
     if renamed_index is not None and renamed_index != index:
         raise HTTPException(status_code=409, detail=f"Model '{body.name}' already exists")
+    _externalize_existing_model_api_keys(config_path, data)
     existing = models[index] if isinstance(models[index], dict) else {}
-    _create_model_config_snapshot(config_path, f"before_update_model:{model_name}")
-    models[index] = _raw_model_from_managed(body, existing=existing)
+    _create_model_config_snapshot(
+        config_path,
+        f"before_update_model:{model_name}",
+        data=data,
+    )
+    updated_model = _raw_model_from_managed(body, existing=existing)
+    _externalize_model_api_key(
+        config_path,
+        updated_model,
+        body.api_key,
+        existing=existing,
+    )
+    models[index] = updated_model
     _write_raw_config(config_path, data)
     reloaded = reload_app_config(str(config_path))
     return _managed_models_from_app_config(reloaded)
@@ -737,10 +887,15 @@ async def delete_model_configuration(
     index = _find_model_index(models, model_name)
     if index is None:
         raise HTTPException(status_code=404, detail=f"Model '{model_name}' not found")
-    del models[index]
-    if not models:
+    if len(models) == 1:
         raise HTTPException(status_code=400, detail="At least one model must remain configured")
-    _create_model_config_snapshot(config_path, f"before_delete_model:{model_name}")
+    _externalize_existing_model_api_keys(config_path, data)
+    _create_model_config_snapshot(
+        config_path,
+        f"before_delete_model:{model_name}",
+        data=data,
+    )
+    del models[index]
     _write_raw_config(config_path, data)
     reloaded = reload_app_config(str(config_path))
     return _managed_models_from_app_config(reloaded)
@@ -755,9 +910,7 @@ async def delete_model_configuration(
 async def list_model_config_versions(request: Request) -> ModelConfigVersionsResponse:
     await _require_admin_user(request)
     config_path = AppConfig.resolve_config_path()
-    return ModelConfigVersionsResponse(
-        versions=_list_model_config_versions(config_path)
-    )
+    return ModelConfigVersionsResponse(versions=_list_model_config_versions(config_path))
 
 
 @router.post(
@@ -781,8 +934,16 @@ async def restore_model_config_version(
     if restored_version is None:
         raise HTTPException(status_code=404, detail=f"Model config version '{version_id}' not found")
 
-    _create_model_config_snapshot(config_path, f"before_restore_model_config:{version_id}")
-    shutil.copyfile(version_path, config_path)
+    current_data = _load_raw_config(config_path)
+    _externalize_existing_model_api_keys(config_path, current_data)
+    _create_model_config_snapshot(
+        config_path,
+        f"before_restore_model_config:{version_id}",
+        data=current_data,
+    )
+    restored_data = _load_raw_config(version_path)
+    _externalize_existing_model_api_keys(config_path, restored_data)
+    _write_raw_config(config_path, restored_data)
     reloaded = reload_app_config(str(config_path))
     models_response = _managed_models_from_app_config(reloaded)
     return ModelConfigRestoreResponse(
