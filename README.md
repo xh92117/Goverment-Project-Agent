@@ -51,7 +51,7 @@ Goverment-Project-Agent/
 默认运行数据与源码分离。当前启动脚本的默认目录为：
 
 ```text
-C:\Users\Administrator\GP Agent
+C:\Users\users name\GP Agent
 ├─ .agent-base\              数据库、线程和运行状态
 └─ workspace\
    ├─ knowledge_base\        知识库
