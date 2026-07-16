@@ -1,132 +1,302 @@
 # 政府项目申报智能体
 
-本项目是面向政府科研项目、科技计划项目、专项资金项目等申报场景的本地 Web 智能体系统。它基于 Agent Base / DeerFlow 运行时改造，内置知识库检索、政策指南分析、申报材料撰写、预算辅助、合规审查和多子智能体协作能力。
-
-默认运行方式为本机启动后端 Gateway 和前端 Web：
+面向政府科研项目、科技计划项目、专项资金项目等申报场景的本地 Web 智能体。
 
 - 前端 Web：`http://127.0.0.1:9527`
 - 后端 Gateway：`http://127.0.0.1:10086`
+- GitHub：<https://github.com/xh92117/Goverment-Project-Agent>
 
-## 核心功能
+## 1. 项目简介
 
-- 政策指南分析：解析申报通知、指南、模板、申报条件、材料清单、截止时间、评分重点和限制条款。
-- 知识库管理：支持把政策文件、申报模板、历史申报书、团队成果、论文、专利、标准等资料整理到知识库，并生成可检索索引。
-- 选题规划：结合政策方向、单位基础、团队成果和竞争风险，生成候选申报方向、项目名称和推荐排序。
-- 文献、标准、专利调研：优先检索知识库，也可调用官方网页和搜索工具补充最新政策、标准、专利、论文和竞品信息。
-- 申报书撰写：辅助生成研究目标、研究内容、技术路线、创新点、预期成果、考核指标、进度安排和风险控制。
-- 预算辅助：按任务和成果拆解预算科目，检查预算说明与研究内容是否匹配。
-- 合规审查：检查指南适配、模板完整性、证据可追溯、预算合规、逻辑一致性和措辞质量。
-- 产物保存：可将可复用的申报章节保存到申报工作区，并在前端 Artifacts 面板查看。
+本项目基于字节跳动开源项目 [DeerFlow](https://github.com/bytedance/deer-flow) 进行二次开发，
+不是 DeerFlow 官方发行版。项目保留 DeerFlow / Agent Base 的智能体运行时、工具调用、工作区、
+技能和多智能体基础能力，并针对中国政府项目申报流程进行了场景化改造。
 
-## 项目结构
+主要二次开发内容包括：
+
+- 政策指南、申报通知和模板的结构化分析。
+- 不依赖 Embedding 模型的增强词法检索与检索质量评测。
+- 按“用户 + 项目”隔离的长期记忆，区分已确认事实和待核验假设。
+- 将多智能体角色扮演改为指南、调研、写作、预算、合规等异构专家协作。
+- 申报资料、图像证据、草稿、Word 导出和项目工作区管理。
+- 面向申报流程的技能、提示词、工具权限和证据追溯机制。
+
+本项目适合用于申报辅助、材料整理和合规检查。模型生成内容不能替代主管部门正式文件、
+专业财务意见、法律意见或人工最终审核。
+
+## 2. 项目结构
 
 ```text
-.
-├─ backend/                 后端 Gateway、Agent 运行时和工具实现
-├─ frontend/                Next.js 前端
-├─ configs/                 政府项目申报智能体示例配置
-├─ skills/public/           政府项目申报相关技能
-├─ scripts/                 安装、启动、检查、知识库索引脚本
-├─ config.yaml              当前本地模型、工具、子智能体配置
-├─ extensions_config.json   当前启用的技能和 MCP 扩展配置
-├─ .env                     本地密钥和运行参数
-└─ start_web_agent.py       Windows 本地一键启动脚本
+Goverment-Project-Agent/
+├─ backend/                  FastAPI Gateway、智能体运行时、工具和后端测试
+│  ├─ app/                   Web API、认证、项目、知识库和导出接口
+│  ├─ packages/harness/      DeerFlow / Agent Base 核心运行时
+│  └─ tests/                 后端单元、集成和质量评测
+├─ frontend/                 Next.js 16 + React 19 前端
+│  ├─ src/                   页面、功能模块、组件和样式
+│  └─ tests/                 前端 Vitest 测试
+├─ configs/                  基础配置及政府申报智能体配置示例
+├─ contracts/                智能体交接和状态契约
+├─ docker/                   Docker Compose、Nginx 和沙箱配置
+├─ scripts/                  安装、诊断、测试、索引和部署脚本
+├─ skills/public/            政府项目申报及通用技能
+├─ config.example.yaml       根应用完整配置模板
+├─ extensions_config.example.json  扩展配置模板
+├─ .env.example              环境变量模板
+├─ start_web_agent.py        Windows 本地前后端一键启动脚本
+└─ LICENSE                   MIT 许可证
 ```
 
-运行态数据默认不写入源码目录，而是放在：
+以下本地文件包含密钥或运行状态，已被 Git 忽略，不会从仓库下载：
+
+```text
+.env
+config.yaml
+extensions_config.json
+.venv/
+.tools/
+.agent-base/
+frontend/.next/
+```
+
+默认运行数据与源码分离。当前启动脚本的默认目录为：
 
 ```text
 C:\Users\Administrator\GP Agent
-├─ .agent-base\             数据库、线程、运行状态
+├─ .agent-base\              数据库、线程和运行状态
 └─ workspace\
-   ├─ knowledge_base\       知识库根目录
-   ├─ proposal_drafts\      申报草稿与保存的 Markdown 产物
-   └─ logs\                 后端和前端启动日志
+   ├─ knowledge_base\        知识库
+   ├─ proposal_drafts\       申报草稿
+   └─ logs\                  运行日志
 ```
 
-## 环境要求
+非 `Administrator` 用户建议在 `.env` 中覆盖运行目录，示例：
 
-- Windows 本地环境。
-- Python `3.12+`。
-- `uv`，用于安装和运行 Python 依赖。
-- Node.js `22+`。
-- `pnpm` 或 Corepack。
-- 可选：Make / Git Bash，用于执行 `make install`、`make doctor` 等命令。
+```env
+AGENT_BASE_HOME=C:\Users\你的用户名\GP Agent\.agent-base
+GOVERNMENT_PROJECT_WORKSPACE_ROOT=C:\Users\你的用户名\GP Agent\workspace
+```
 
-可以先检查基础工具：
+## 3. 环境要求
+
+推荐使用 Windows 10/11 和 PowerShell。项目的本地一键启动脚本已按 Windows 环境优化。
+
+| 组件    | 要求                                       |
+| ------- | ------------------------------------------ |
+| Git     | 用于克隆和更新源码                         |
+| Python  | `3.12.x`，后端要求 `>=3.12`                |
+| uv      | Python 依赖和虚拟环境管理                  |
+| Node.js | 推荐 `22 LTS`                              |
+| pnpm    | `10.26.2`，建议通过 Corepack 安装          |
+| 网络    | 首次安装依赖、调用在线模型或联网检索时需要 |
+| Docker  | 可选，仅容器沙箱或 Docker 部署需要         |
+
+建议至少预留数 GB 磁盘空间；如运行本地大模型，CPU、内存和显存要求由所选模型决定。
+
+检查已安装版本：
 
 ```powershell
-python .\scripts\check.py
+git --version
+python --version
+node --version
+pnpm --version
+uv --version
 ```
 
-## 安装依赖
+## 4. 首次安装
 
-推荐从项目根目录执行：
+### 4.1 从 GitHub 下载源码
+
+#### 方式一：Git 直接下载
+
+```powershell
+git clone https://github.com/xh92117/Goverment-Project-Agent.git
+Set-Location .\Goverment-Project-Agent
+```
+
+#### 方式二：通过本地代理端口下载
+
+以下示例使用 HTTP 代理 `127.0.0.1:7897`，只对本次克隆生效：
+
+```powershell
+git -c http.proxy=http://127.0.0.1:7897 clone https://github.com/xh92117/Goverment-Project-Agent.git
+Set-Location .\Goverment-Project-Agent
+```
+
+也可以临时设置当前 PowerShell 会话的代理：
+
+```powershell
+$env:HTTP_PROXY = "http://127.0.0.1:7897"
+$env:HTTPS_PROXY = "http://127.0.0.1:7897"
+git clone https://github.com/xh92117/Goverment-Project-Agent.git
+Set-Location .\Goverment-Project-Agent
+```
+
+下载完成后如不再使用代理，可清除当前会话变量：
+
+```powershell
+Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
+Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
+```
+
+#### 方式三：浏览器直接下载 ZIP
+
+打开仓库页面，选择 **Code → Download ZIP**，或直接访问：
+
+<https://github.com/xh92117/Goverment-Project-Agent/archive/refs/heads/main.zip>
+
+使用 PowerShell 和代理下载 ZIP：
+
+```powershell
+Invoke-WebRequest `
+  -Uri "https://github.com/xh92117/Goverment-Project-Agent/archive/refs/heads/main.zip" `
+  -Proxy "http://127.0.0.1:7897" `
+  -OutFile ".\Goverment-Project-Agent.zip"
+
+Expand-Archive ".\Goverment-Project-Agent.zip" -DestinationPath "." -Force
+Set-Location ".\Goverment-Project-Agent-main"
+```
+
+### 4.2 安装基础工具
+
+确认已安装 Python 3.12 和 Node.js 22，然后执行：
+
+```powershell
+python -m pip install --upgrade uv
+corepack enable
+corepack prepare pnpm@10.26.2 --activate
+```
+
+如果 `corepack` 不可用，可以使用：
+
+```powershell
+npm install --global pnpm@10.26.2
+```
+
+### 4.3 安装后端依赖
+
+在项目根目录执行：
+
+```powershell
+Push-Location .\backend
+$env:UV_PROJECT_ENVIRONMENT = "..\.venv"
+uv sync --locked
+
+# 推荐功能集：DeepSeek、OpenAI 兼容模型、MCP、联网检索和文档解析
+uv pip install `
+  --python "..\.venv\Scripts\python.exe" `
+  --editable ".\packages\harness[deepseek,openai,mcp,search,documents]"
+Pop-Location
+```
+
+如果使用 Claude 或 Ollama，可在上述可选依赖列表中分别加入 `anthropic` 或 `ollama`。
+
+### 4.4 安装前端依赖
+
+```powershell
+Push-Location .\frontend
+pnpm install --frozen-lockfile
+Pop-Location
+```
+
+前端依赖会安装到 `frontend/node_modules`；pnpm 的共享缓存保存在根目录
+`.venv/pnpm-store`。项目已启用复制与提升模式，以减少 Windows 因符号链接权限导致的
+`ERR_PNPM_EPERM` 安装失败。
+
+如果已安装 Make，也可以用以下命令安装基础依赖：
 
 ```powershell
 make install
 ```
 
-该命令会：
+### 4.5 创建本地配置
 
-- 将后端 Python 依赖安装到根目录 `.venv`。
-- 将前端依赖安装到 `.venv/frontend/node_modules`。
-- 根据 `frontend/.npmrc` 使用 `.venv/pnpm-store` 作为 pnpm store。
-
-如果当前机器没有 Make，可以手动安装：
+首次安装时，在项目根目录执行：
 
 ```powershell
-cd .\backend
-$env:UV_PROJECT_ENVIRONMENT = "..\.venv"
-uv sync
-
-cd ..\frontend
-pnpm install
+Copy-Item ".\.env.example" ".\.env"
+Copy-Item ".\config.example.yaml" ".\config.yaml"
+Copy-Item ".\extensions_config.example.json" ".\extensions_config.json"
 ```
 
-安装后建议运行：
+如果目标文件已经存在，不要覆盖，直接编辑现有文件。
 
-```powershell
-make doctor
-```
+政府申报专用配置示例位于：
 
-## 模型配置
+- `configs/government-project-declaration.agent.example.yaml`
+- `configs/government-project-declaration.subagents.example.yaml`
+- `configs/government-project-declaration.SOUL.example.md`
 
-当前 `config.yaml` 默认配置了两个 DeepSeek 模型：
+其中 `subagents` 片段需要合并到根 `config.yaml` 的同名配置段；Agent 示例用于创建
+`government-project-declaration` 自定义智能体目录。
 
-- `deepseek-v4-flash`：用于常规对话、资料整理、文本改写等轻量任务。
-- `deepseek-v4-pro`：用于选题论证、技术路线推理、创新点梳理、申报书核心章节等复杂任务。
+### 4.6 配置模型
 
-在项目根目录创建或编辑 `.env`：
+真实 API Key 只写入 `.env`，不要直接提交到 `config.yaml` 或 GitHub。
+
+DeepSeek 最小示例：
 
 ```env
-DEEPSEEK_API_KEY=你的 DeepSeek API Key
+DEEPSEEK_API_KEY=你的实际APIKey
 ```
 
-搜索和知识库解析相关能力可按需配置：
+在 `config.yaml` 的 `models:` 下配置模型：
+
+```yaml
+models:
+  - name: deepseek-chat
+    display_name: DeepSeek Chat
+    use: deerflow.models.patched_deepseek:PatchedChatDeepSeek
+    model: deepseek-chat
+    api_key: $DEEPSEEK_API_KEY
+    request_timeout: 600
+    max_retries: 2
+```
+
+> `config.yaml` 中的 `deerflow.*` 和安装环境中的 `deerflow-harness` 是继承自上游的
+> Python 包名与动态导入路径。它们属于运行时兼容接口，不代表当前项目的产品名称，请勿
+> 直接批量替换；面向用户的安装提示、页面和文档使用“政府项目申报智能体”名称。
+
+OpenAI 或其他 OpenAI 兼容接口示例：
 
 ```env
-# 可选：增强搜索召回
-SERPER_API_KEY=你的 Serper API Key
-JINA_API_KEY=你的 Jina API Key
+OPENAI_API_KEY=你的实际APIKey
+```
 
-# 可选：PDF 知识库解析
-MINERU_API_TOKEN=你的 MinerU Token
+```yaml
+models:
+  - name: openai-compatible
+    display_name: OpenAI Compatible
+    use: langchain_openai:ChatOpenAI
+    model: 你的模型名称
+    api_key: $OPENAI_API_KEY
+    base_url: https://你的服务地址/v1
+    request_timeout: 600
+    max_retries: 2
+    supports_vision: false
+```
+
+如模型支持图片理解，将 `supports_vision` 设置为 `true`，并可在 `config.yaml` 中使用
+`knowledge_image_model` 指定知识库图片识别模型。
+
+可选搜索和 PDF 解析配置：
+
+```env
+SERPER_API_KEY=你的SerperKey
+JINA_API_KEY=你的JinaKey
+MINERU_API_TOKEN=你的MinerUToken
 MINERU_API_BASE_URL=https://mineru.net
-MINERU_MODEL_VERSION=vlm
-MINERU_LANGUAGE=ch
-MINERU_TIMEOUT_SECONDS=60
-MINERU_POLL_INTERVAL_SECONDS=5
-MINERU_MAX_WAIT_SECONDS=900
 ```
 
-也可以在前端“设置 → PDF 解析”中填写 MinerU 配置；保存后会同步更新 `.env` 和 `config.yaml`。
+安装完成后可执行基础检查：
 
-如需添加其他模型，在 `config.yaml` 的 `models:` 下追加模型项，并在子智能体配置中引用对应的 `name`。例如 OpenAI 兼容模型通常需要配置 `use`、`model`、`api_key`、`base_url`、`request_timeout` 等字段。真实密钥建议继续放在 `.env` 中，再通过 `$变量名` 引用。
+```powershell
+python .\scripts\check.py
+```
 
-## 启动智能体
+## 5. 智能体启动
 
-从项目根目录执行：
+从项目根目录启动前端和后端：
 
 ```powershell
 & ".\.venv\Scripts\python.exe" ".\start_web_agent.py"
@@ -134,206 +304,114 @@ MINERU_MAX_WAIT_SECONDS=900
 
 启动成功后访问：
 
-```text
-http://127.0.0.1:9527
-```
+- 前端：<http://127.0.0.1:9527>
+- 后端健康检查：<http://127.0.0.1:10086/health>
 
-如需配置本地代理：
-
-```powershell
-& ".\.venv\Scripts\python.exe" ".\start_web_agent.py" --network-proxy http://127.0.0.1:7897
-```
-
-如需修改端口：
+通过本地 `7897` 代理调用模型和搜索服务：
 
 ```powershell
-& ".\.venv\Scripts\python.exe" ".\start_web_agent.py" --backend-port 10086 --frontend-port 9527
+& ".\.venv\Scripts\python.exe" ".\start_web_agent.py" `
+  --network-proxy "http://127.0.0.1:7897"
 ```
 
-停止服务时，在运行 `start_web_agent.py` 的 PowerShell 窗口按 `Ctrl+C`。
-
-## 知识库使用
-
-### 图像证据（兼容 LLM-Wiki）
-
-知识库上传现在同时支持 JPG、JPEG、PNG、WebP 和 TIFF。图像不会写入原有文本
-`index.json` 正文，而是保存在知识库根目录的 `.assets/` 中，并自动生成一份待复核
-`evidence.md` 证据卡；LLM-Wiki 只增加 `entry_type=evidence` 指针，因此原有文档、
-章节分块、索引搜索和 `knowledge_read_file` 流程保持兼容。
-
-- 图像按 `applicant_id` 隔离和去重；读取原图必须再次提供匹配的申报主体。
-- 新证据默认是 `needs_review`，人工确认前不得当作已核实的申报事实。
-- 图片上传阶段只做安全存储并加入待识别队列；点击“整理入库并构建索引”或
-  “仅重建索引”时，系统才调用配置中 `supports_vision: true` 的多模态模型，由模型
-  自主判断是否属于申报证据，并提取类型、持有人、颁发单位、编号、日期、OCR 原文、
-  申报章节和标签。项目不安装也不依赖 Tesseract、`pytesseract` 或其他本地 OCR。
-- 如果没有配置支持视觉的模型，或模型调用/JSON 解析失败，构建结果会在上传卡片下方
-  显示明确警告，图片保持待识别状态，且不影响原有文本知识索引。
-- 可在 `config.yaml` 设置 `knowledge_image_model` 明确指定知识库视觉模型；未指定时使用
-  第一个 `supports_vision: true` 的模型。模型调用温度固定为 0，大图会缩放到安全尺寸，
-  图片内的指令性文字会按不可信内容处理。
-- “知识库管理”标题栏右上角常驻显示“图片识别模型”状态。点击后会打开置顶配置窗口，
-  该入口采用单行紧凑布局，已配置时以绿色状态点显示具体模型名，未配置时只显示一次
-  “图片识别模型未配置”。窗口既可
-  选择已有 `supports_vision: true` 模型，也可复用“设置 → 模型供应商”的供应商、模型名、
-  URL 和 API Key 表单直接新增；从该窗口创建的模型会自动启用视觉能力并立即写入
-  `knowledge_image_model`，无需重启服务。构建索引遇到图片但视觉能力不可用时，该窗口
-  也会自动打开；普通文档仍会继续完成索引。
-- 模型配置中的 `provider` 只用于设置界面识别供应商及展示默认 URL，不会作为请求参数
-  传给 OpenAI 兼容客户端，避免 DashScope 等接口因未知 `provider` 参数拒绝图片识别。
-- 模型判断为 `non_evidence_image` 时仍保持 `needs_review`，不会自动驳回。知识库列表存在
-  已识别待审核证据时，工具栏会出现“批量确认证据”或“标记无关图片”；确认操作逐条
-  校验，缺少持有人或可追溯字段的证据会被跳过。
-- 可使用 `knowledge_search_evidence` 和 `knowledge_read_evidence` 检索、读取证据卡。
-- 撰写申报内容或生成 Word 时，智能体会主动使用
-  `verification_statuses=["human_verified"]` 检索相关图片证据，并把
-  `knowledge_read_evidence` 返回的 `word_image_markdown` 放入草稿。Word 导出器会解析
-  `evidence://<applicant_id>/<evidence_id>`，再次校验当前用户、申报主体和人工复核状态后
-  嵌入原图；同一证据只插入一次，WebP/TIFF 会转换为 Word 兼容的 PNG。只有内部
-  `evidence:<id>` 引用时，默认主体的已复核证据也会自动补入“相关证明材料”，且内部 ID
-  不会显示在成品 Word 中。未复核、错主体、文件缺失或伪造 URI 均不会插图。
-- 项目工作区的 Word 导出弹窗提供“不插入图片”和“智能匹配并插入”两个选项，默认保持
-  直接导出。开启智能插图后，后端使用当前模型一次性分析所选 Markdown 与默认申报主体的
-  `human_verified` 证据，为每个文档分配相关图片并只在本次导出中追加引用，不改写源文件；
-  没有已确认图片、没有相关匹配或模型调用失败时会返回明确提示。
-- MinerU PDF 解析会保留 ZIP 中被 Markdown 引用的图片，并写入
-  `<源文件名>.pdf.assets/`；旧缓存存在缺失图片时会在下次重建时自动失效。
-- 删除证据会同步清理原图、缩略图、证据卡、注册表和 LLM-Wiki 指针。
-
-当前前端不单独展示申报主体输入或图像预览区域，图片使用默认内部归属空间并随普通
-材料统一上传、统一构建。智能体只应把 `human_verified` 证据作为已核实申报事实使用。
-原有非图片文件仍按
-`_incoming → 整理入库 → 重建索引` 流程处理。
-
-默认知识库目录：
-
-```text
-C:\Users\Administrator\GP Agent\workspace\knowledge_base
-```
-
-推荐资料组织方式：
-
-```text
-knowledge_base\
-├─ _incoming\        新增待整理资料
-├─ 政策指南\         政策指南、通知、申报条件
-├─ 申报书模板\       申报模板、填报说明、预算模板
-├─ 历史申报书\       历史申报书、立项案例
-├─ 团队成果\         团队成果、论文、专利、标准、奖项
-├─ 已有研究基础\     研究基础、平台条件、已有项目
-└─ 预算依据\         预算模板、预算科目、经费说明
-```
-
-常用流程：
-
-1. 将新增 PDF、Word、Markdown、TXT、CSV、Excel 等资料放入 `_incoming`。
-2. 在前端对话中要求智能体“更新知识库”或“整理新增申报资料”。
-3. 智能体会调用 `knowledge_incremental_update` 整理资料并更新索引。
-4. 后续选题、撰写和审查任务会优先检索知识库，再补充网页信息。
-
-### 无 Embedding 的检索增强
-
-当前政府申报检索明确使用 `keyword` 模式，不要求下载、部署或调用 Embedding 模型。
-召回由多路词法查询和强元数据过滤共同完成：原始问题、同义/简称变体、标题/关键词/
-摘要/正文加权，以及主管部门、文种、年份、资料类型和有效日期过滤。政策指南、申报通知、
-模板和历史申报章节因此不会只靠“文本看起来相似”混排。
-
-检索质量由 `backend/tests/evals/knowledge_retrieval_cases.yaml` 的 Golden Set 持续评估，
-同时检查 Top-K 命中和禁止来源污染。以后只有在资料规模、同义表达和跨语言召回达到词法
-检索瓶颈，并且能够承担模型服务、向量重建、版本迁移和评测成本时，才考虑引入 Embedding。
-
-### 项目绑定记忆
-
-政府申报智能体的长期记忆按“当前用户 + `project_id`”隔离，保存在运行目录的
-`users/<user_id>/projects/<project_id>/memory.json`。项目工作区会把 `project_id` 和
-`applicant_id` 传到主智能体及所有专家；缺少 `project_id` 时，政府申报智能体不会读取
-或更新长期记忆，也不会退回到跨项目用户画像。
-
-- 人工确认信息存放在 `confirmedFacts`。
-- 对话自动抽取只能进入 `workingAssumptions`，并标记来源和置信度；模型输出不能直接创建
-  “已确认事实”。
-- `workflowState` 只记录工作阶段，不作为事实证据。
-- 注入提示会明确区分“可用事实”和“待核验假设”，禁止跨项目、跨申报主体复用。
-- 当前不启用梦境记忆蒸馏，不做跨项目聚类、合并或离线自我强化。
-
-也可以用脚本构建索引：
+关闭后端热重载，适合稳定运行：
 
 ```powershell
-.\scripts\build-knowledge-index.ps1
+& ".\.venv\Scripts\python.exe" ".\start_web_agent.py" --no-reload
 ```
 
-## 基本使用流程
+自定义端口：
 
-1. 打开 `http://127.0.0.1:9527`。
-2. 新建或选择一个对话。
-3. 说明项目类型、申报年份、主管部门、申报单位、技术方向和已有材料。
-4. 要求智能体先分析指南和模板，再进行选题、调研、撰写或审查。
-5. 对可复用章节，要求智能体“保存到申报草稿”。
-6. 在前端 Artifacts 面板查看已保存内容。
+```powershell
+& ".\.venv\Scripts\python.exe" ".\start_web_agent.py" `
+  --backend-port 10087 `
+  --frontend-port 9528
+```
+
+启动日志默认位于 `.tools/logs/`。前台运行时按 `Ctrl+C` 可同时停止前后端。
+
+## 6. 基本使用流程
+
+1. 打开 <http://127.0.0.1:9527>。
+2. 在“项目”页面新建项目，为不同申报任务使用不同项目，避免记忆和材料串用。
+3. 填写或说明申报年份、主管部门、项目类别、申报单位、技术方向和截止时间。
+4. 上传申报通知、指南、模板、历史材料、团队成果、专利、论文和预算依据。
+5. 在知识库页面整理新增资料并构建索引；图片证据需人工确认后才能作为已核实事实使用。
+6. 先让智能体分析申报指南、资格条件、评分点、材料清单和禁止事项。
+7. 再进行选题规划、研究现状调研、研究方案编写、预算编制和合规审查。
+8. 将可复用章节保存到项目草稿，按需导出 Markdown 或 Word。
+9. 提交前由人工逐项核对官方要求、数字、名称、证明材料和预算数据。
 
 示例任务：
 
 ```text
-请基于知识库中 2026 年省重点研发计划指南，分析我们单位在智能检测方向可以申报的 5 个课题方向，并给出推荐排序。
+请基于知识库中的 2026 年省重点研发计划指南，提取申报条件、支持方向、考核指标、
+材料清单和截止时间，并标出需要人工确认的内容。
 ```
 
 ```text
-请围绕“隧道结构病害智能识别与风险预警”撰写申报书中的研究目标、研究内容、技术路线、创新点和考核指标。
+请结合当前项目资料，规划 5 个智能检测方向的候选课题，说明指南匹配度、单位基础、
+创新性、实施风险和推荐排序。
 ```
 
 ```text
-请根据指南和模板审查这份申报书草稿，列出 P0/P1/P2 问题、修改建议和缺失证据。
+请审查当前申报书草稿，按 P0/P1/P2 列出指南不符合项、逻辑冲突、预算风险、缺失证据
+和可直接执行的修改建议。
 ```
 
-## 异构专家协作
+## 7. 本智能体功能简介
 
-当前配置将多智能体作为能力、工具、模型和交付契约不同的异构专家，而不是人格化角色扮演：
+### 政策指南与模板分析
 
-- `guide-analyzer`：指南、模板、资格条件和申报风险分析。
-- `knowledge-manager`：知识库新增资料整理和索引更新。
+提取申报对象、资格条件、支持方向、截止时间、材料清单、评分重点、预算限制和否决条款，
+并优先使用当前有效的官方文件作为依据。
+
+### 知识库与无 Embedding 检索
+
+支持 PDF、Word、Markdown、TXT、CSV、Excel 和常见图片资料。当前检索不要求安装或部署
+Embedding 模型，通过多路词法查询、同义词扩展、字段加权、年份/部门/文种过滤和
+Golden Set 评测提高召回质量，并减少历史材料污染当前政策结论。
+
+### 图像证据管理
+
+证书、专利、奖项、截图等图片按申报主体隔离存储。图片默认处于待复核状态，只有
+`human_verified` 证据可以作为已确认申报事实或插入 Word 成品。
+
+### 项目绑定长期记忆
+
+记忆按“用户 + `project_id`”隔离。人工确认内容进入 `confirmedFacts`，模型从对话抽取的
+内容只能进入 `workingAssumptions`；当前不启用跨项目梦境蒸馏，降低长期记忆污染风险。
+
+### 异构专家协作
+
+多智能体不是人格化角色扮演，而是按工具、模型、权限和交付物划分的专家协作：
+
+- `guide-analyzer`：政策指南、模板和资格条件。
+- `knowledge-manager`：资料整理和知识库索引。
 - `topic-planner`：课题方向和项目名称规划。
-- `literature-researcher`：国内外研究现状、文献和技术趋势调研。
-- `standards-patent-researcher`：标准、专利、检测方法和工程应用调研。
-- `proposal-writer`：只把已给定决策和证据编排为申报章节，不自行联网扩展事实。
-- `budget-analyst`：预算编制和费用说明辅助。
-- `compliance-reviewer`：使用不同模型进行只读独立审查，不能直接保存或修改被审稿件。
+- `literature-researcher`：研究现状、文献和技术趋势。
+- `standards-patent-researcher`：标准、专利、检测方法和工程应用。
+- `proposal-writer`：依据已确认决策和证据撰写申报章节。
+- `budget-analyst`：预算拆解、测算和说明。
+- `compliance-reviewer`：只读独立审查和风险分级。
 
-主智能体按互不重叠的专家交付拆解任务，每个任务自动携带项目/申请人作用域。专家统一返回
-结论、证据项、冲突与边界、缺失信息和交接建议；主智能体按“当前官方规则 > 已核验一手
-证据 > 人工确认项目事实 > 工作假设 > 模型推断”裁决冲突，不以多个智能体重复同一说法
-作为真实性依据。写作前形成证据—主张矩阵，完成后再交给独立合规专家审查。
+主智能体负责拆解、调度、证据冲突裁决和最终整合，不以多个模型重复同一观点作为真实性依据。
 
-## 常见问题
+### 申报全流程辅助
 
-### 提示找不到前端 Next.js 入口
+覆盖指南分析、选题规划、国内外研究现状、研究目标、研究内容、技术路线、创新点、考核指标、
+进度安排、预算说明、风险控制、合规审查和成品导出。
 
-说明前端依赖没有安装或 `.venv/frontend/node_modules` 不完整。重新执行：
+### 产物保存与 Word 导出
 
-```powershell
-cd .\frontend
-pnpm install
-```
+支持按项目保存 Markdown 草稿、管理版本、导出多个章节，并可在人工确认后智能匹配图片证据
+插入 Word 文档。
 
-### 提示 `DEEPSEEK_API_KEY is not set`
+## 8. 许可
 
-检查项目根目录 `.env` 是否存在，并确认包含：
+本项目采用 [MIT License](LICENSE)。
 
-```env
-DEEPSEEK_API_KEY=你的实际密钥
-```
+本项目由 DeerFlow 二次开发而来，保留上游版权和许可声明。使用、修改或分发本项目时，
+请同时遵守仓库 `LICENSE`、第三方依赖许可证及所使用模型和数据服务的条款。
 
-### 端口被占用
-
-默认端口是前端 `9527`、后端 `10086`。可以换端口启动：
-
-```powershell
-& ".\.venv\Scripts\python.exe" ".\start_web_agent.py" --backend-port 10087 --frontend-port 9528
-```
-
-### 清理构建缓存
-
-可删除 `frontend/.next` 后重新启动，Next.js 会自动重新生成构建缓存。
-
-## 许可
-
-本项目基于 DeerFlow / Agent Base 改造，保留上游许可与来源说明。许可条款见 [LICENSE](LICENSE)。
+DeerFlow 上游项目：<https://github.com/bytedance/deer-flow>

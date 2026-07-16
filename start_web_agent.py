@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = ROOT / "backend"
 FRONTEND_DIR = ROOT / "frontend"
 ROOT_VENV_DIR = ROOT / ".venv"
-FRONTEND_NODE_MODULES_DIR = ROOT_VENV_DIR / "frontend" / "node_modules"
+FRONTEND_NODE_MODULES_DIR = FRONTEND_DIR / "node_modules"
 DEFAULT_USER_ROOT = Path(r"C:\Users\Administrator\GP Agent")
 DEFAULT_RUNTIME_HOME = DEFAULT_USER_ROOT / ".agent-base"
 DEFAULT_WORKSPACE_ROOT = DEFAULT_USER_ROOT / "workspace"
@@ -418,7 +418,7 @@ def main() -> int:
     backend_python = ROOT_VENV_DIR / "Scripts" / "python.exe"
     next_bin = FRONTEND_NODE_MODULES_DIR / "next" / "dist" / "bin" / "next"
     ensure_file(backend_python, "Backend root venv python was not found")
-    ensure_file(next_bin, "Frontend Next.js entry was not found in the root .venv. Install frontend dependencies first")
+    ensure_file(next_bin, "Frontend Next.js entry was not found. Run `make install` first")
 
     if is_port_open(args.host, args.backend_port):
         raise SystemExit(f"Backend port is already in use: {args.host}:{args.backend_port}")
