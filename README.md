@@ -58,7 +58,7 @@ C:\Users\Administrator\GP Agent
    ├─ proposal_drafts\       申报草稿
    └─ logs\                  运行日志
 
-
+```
 ## 3. 环境要求
 
 推荐使用 Windows 10/11 和 PowerShell。项目的本地一键启动脚本已按 Windows 环境优化。
