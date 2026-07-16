@@ -47,17 +47,6 @@ Goverment-Project-Agent/
 └─ LICENSE                   MIT 许可证
 ```
 
-以下本地文件包含密钥或运行状态，已被 Git 忽略，不会从仓库下载：
-
-```text
-.env
-config.yaml
-extensions_config.json
-.venv/
-.tools/
-.agent-base/
-frontend/.next/
-```
 
 默认运行数据与源码分离。当前启动脚本的默认目录为：
 
@@ -68,14 +57,7 @@ C:\Users\Administrator\GP Agent
    ├─ knowledge_base\        知识库
    ├─ proposal_drafts\       申报草稿
    └─ logs\                  运行日志
-```
 
-非 `Administrator` 用户建议在 `.env` 中覆盖运行目录，示例：
-
-```env
-AGENT_BASE_HOME=C:\Users\你的用户名\GP Agent\.agent-base
-GOVERNMENT_PROJECT_WORKSPACE_ROOT=C:\Users\你的用户名\GP Agent\workspace
-```
 
 ## 3. 环境要求
 
