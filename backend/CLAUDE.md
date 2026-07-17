@@ -86,6 +86,10 @@ make start      # Start production services locally
 make stop       # Stop all services
 ```
 
+On native Windows, `start.bat` is the preferred entrypoint. It validates the
+installed backend/frontend dependency state, installs missing or changed
+dependencies, and then launches both services through `start_web_agent.py`.
+
 **Backend directory** (for backend development only):
 ```bash
 make install            # Install backend dependencies

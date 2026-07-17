@@ -23,18 +23,31 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = ROOT / "backend"
 FRONTEND_DIR = ROOT / "frontend"
 ROOT_VENV_DIR = ROOT / ".venv"
 FRONTEND_NODE_MODULES_DIR = FRONTEND_DIR / "node_modules"
-DEFAULT_USER_ROOT = Path(r"C:\Users\Administrator\GP Agent")
+
+
+def default_user_root() -> Path:
+    """Return the external runtime root for the active Windows user."""
+    return Path.home() / "GP Agent"
+
+
+DEFAULT_USER_ROOT = default_user_root()
 DEFAULT_RUNTIME_HOME = DEFAULT_USER_ROOT / ".agent-base"
 DEFAULT_WORKSPACE_ROOT = DEFAULT_USER_ROOT / "workspace"
 DEFAULT_LOG_ROOT = ROOT / ".tools" / "logs"
-DEFAULT_NODE = Path(
-    r"C:\Users\Administrator\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe"
+DEFAULT_NODE = (
+    Path.home()
+    / ".cache"
+    / "codex-runtimes"
+    / "codex-primary-runtime"
+    / "dependencies"
+    / "node"
+    / "bin"
+    / "node.exe"
 )
 
 

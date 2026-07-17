@@ -43,7 +43,8 @@ Goverment-Project-Agent/
 ├─ config.example.yaml       根应用完整配置模板
 ├─ extensions_config.example.json  扩展配置模板
 ├─ .env.example              环境变量模板
-├─ start_web_agent.py        Windows 本地前后端一键启动脚本
+├─ start.bat                 Windows 依赖检查、安装和启动入口
+├─ start_web_agent.py        Windows 本地前后端进程启动脚本
 └─ LICENSE                   MIT 许可证
 ```
 
@@ -380,7 +381,23 @@ python .\scripts\check.py
 
 ## 5. 智能体启动
 
-从项目根目录启动前端和后端：
+Windows 推荐从项目根目录双击 `start.bat`，或在 PowerShell 中执行：
+
+```powershell
+.\start.bat
+```
+
+脚本会先检查 Node.js 版本、后端关键依赖、Next.js 依赖以及依赖清单是否变化。依赖齐全时直接启动；
+缺失或依赖清单变化时，会自动安装 `uv`/`pnpm`（如有需要）、同步前后端依赖，再启动服务。
+Node.js 需要预先安装 22 或更高版本，因为批处理无法可靠地替用户选择系统级 Node.js 安装方式。
+
+`start.bat` 支持将参数继续传给启动脚本，例如：
+
+```powershell
+.\start.bat --network-proxy "http://127.0.0.1:7897"
+```
+
+也可以手动启动前端和后端：
 
 ```powershell
 & ".\.venv\Scripts\python.exe" ".\start_web_agent.py"
