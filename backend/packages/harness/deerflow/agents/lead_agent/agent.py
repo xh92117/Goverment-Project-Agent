@@ -50,6 +50,9 @@ from deerflow.tracing import build_tracing_callbacks
 
 logger = logging.getLogger(__name__)
 
+GOVERNMENT_PROJECT_AGENT_NAME = "government-project-declaration"
+GOVERNMENT_PROJECT_REQUIRED_TOOL_GROUPS = ("web",)
+
 
 def _get_runtime_config(config: RunnableConfig) -> dict:
     """Merge legacy configurable options with LangGraph runtime context."""
@@ -58,6 +61,25 @@ def _get_runtime_config(config: RunnableConfig) -> dict:
     if isinstance(context, dict):
         cfg.update(context)
     return cfg
+
+
+def _effective_tool_groups(agent_name: str | None, agent_config) -> list[str] | None:
+    """Return the runtime group whitelist, including product-required groups.
+
+    Older installations may already have a materialized declaration-agent
+    config that predates the bundled ``web`` group. Templates are deliberately
+    never allowed to overwrite user files, so enforce this product capability
+    at binding time as a backward-compatible migration.
+    """
+    groups = agent_config.tool_groups if agent_config else None
+    if agent_name != GOVERNMENT_PROJECT_AGENT_NAME or groups is None:
+        return groups
+
+    effective = list(groups)
+    for required_group in GOVERNMENT_PROJECT_REQUIRED_TOOL_GROUPS:
+        if required_group not in effective:
+            effective.append(required_group)
+    return effective
 
 
 def _resolve_model_name(requested_model_name: str | None = None, *, app_config: AppConfig | None = None) -> str:
@@ -419,6 +441,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
     output_style = cfg.get("output_style")
 
     agent_config = load_agent_config(agent_name) if not is_bootstrap else None
+    effective_tool_groups = _effective_tool_groups(agent_name, agent_config)
     available_skills = _available_skill_names(agent_config, is_bootstrap)
     # Custom agent model from agent config (if any), or None to let _resolve_model_name pick the default
     agent_model_name = agent_config.model if agent_config and agent_config.model else None
@@ -457,7 +480,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
             "reasoning_effort": reasoning_effort,
             "is_plan_mode": is_plan_mode,
             "subagent_enabled": subagent_enabled,
-            "tool_groups": agent_config.tool_groups if agent_config else None,
+            "tool_groups": effective_tool_groups,
             "available_skills": sorted(available_skills) if available_skills is not None else None,
         }
     )
@@ -506,7 +529,7 @@ def _make_lead_agent(config: RunnableConfig, *, app_config: AppConfig):
     # The default agent (no agent_name) does not see this tool.
     extra_tools = [update_agent] if agent_name else []
     # Default lead agent (unchanged behavior)
-    raw_tools = get_available_tools(model_name=model_name, groups=agent_config.tool_groups if agent_config else None, subagent_enabled=subagent_enabled, app_config=resolved_app_config)
+    raw_tools = get_available_tools(model_name=model_name, groups=effective_tool_groups, subagent_enabled=subagent_enabled, app_config=resolved_app_config)
     filtered = filter_tools_by_skill_allowed_tools(raw_tools + extra_tools, skills_for_tool_policy)
     final_tools, setup = assemble_deferred_tools(filtered, enabled=resolved_app_config.tool_search.enabled)
     return create_agent(

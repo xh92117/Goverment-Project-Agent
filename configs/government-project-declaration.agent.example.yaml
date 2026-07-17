@@ -10,6 +10,7 @@ model: null
 workspace_path: null
 tool_groups:
   - filesystem
+  - web
 # Built-in knowledge tools are always available to the agent:
 # - knowledge_search_index
 # - knowledge_read_file

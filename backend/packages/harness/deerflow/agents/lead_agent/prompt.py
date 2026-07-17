@@ -806,14 +806,14 @@ The frontend has selected the Government Research Project Declaration workflow.
 Runtime tool preferences:
 - Knowledge-base retrieval: {_bool_label(tools_dict.get("knowledge", True))}
 - Plan/Todo workflow: {_bool_label(tools_dict.get("plan", True))}
-- Web search: {_bool_label(tools_dict.get("web", False))}
+- Web search: {_bool_label(tools_dict.get("web", True))}
 
 Runtime capability preferences:
 - Plan mode: {_bool_label(capabilities_dict.get("planMode", True))}
 - Thinking: {_bool_label(capabilities_dict.get("thinking", True))}
 - Subagent delegation: {_bool_label(capabilities_dict.get("subagent", True))}
 - Long-term memory: {_bool_label(capabilities_dict.get("memory", True))}
-- Web search: {_bool_label(capabilities_dict.get("webSearch", False))}
+- Web search: {_bool_label(capabilities_dict.get("webSearch", True))}
 - Knowledge RAG: {_bool_label(capabilities_dict.get("knowledgeRag", True))}
 - Document conversion: {_bool_label(capabilities_dict.get("documentConversion", True))}
 - Tool guardrail: {_bool_label(capabilities_dict.get("guardrail", True))}

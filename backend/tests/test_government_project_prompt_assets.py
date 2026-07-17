@@ -46,6 +46,25 @@ def test_government_project_skills_keep_required_runtime_tools_available():
     } <= allowed_union
 
 
+def test_government_project_agent_template_enables_web_tool_group():
+    data = yaml.safe_load(
+        (REPO_ROOT / "configs" / "government-project-declaration.agent.example.yaml").read_text(encoding="utf-8")
+    )
+
+    assert {"filesystem", "web"} <= set(data["tool_groups"])
+
+
+def test_government_project_existing_configs_receive_required_web_group():
+    from types import SimpleNamespace
+
+    from deerflow.agents.lead_agent.agent import _effective_tool_groups
+
+    legacy_config = SimpleNamespace(tool_groups=["filesystem"])
+
+    assert _effective_tool_groups("government-project-declaration", legacy_config) == ["filesystem", "web"]
+    assert _effective_tool_groups("other-agent", legacy_config) == ["filesystem"]
+
+
 def test_root_config_declares_government_project_custom_subagents():
     data = yaml.safe_load((REPO_ROOT / "config.yaml").read_text(encoding="utf-8"))
     custom_agents = data["subagents"]["custom_agents"]
@@ -122,6 +141,9 @@ def test_government_project_runtime_prompt_requires_synthesis():
     assert "not fictional roles" in prompt
     assert "because several agents repeat it" in prompt
     assert "evidence-to-claim matrix" in prompt
+    assert "Runtime tool preferences:\n- Knowledge-base retrieval: enabled\n- Plan/Todo workflow: enabled\n- Web search: enabled" in prompt
+    assert "Runtime capability preferences:" in prompt
+    assert "- Web search: enabled" in prompt
 
 
 def test_government_project_runtime_prompt_parallelizes_complex_research_tasks():

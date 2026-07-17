@@ -52,6 +52,38 @@ export interface UploadList {
 
 export const GOVERNMENT_PROJECT_ASSISTANT_ID = "government-project-declaration";
 
+function runtimeRecord(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+/** Keep the runtime prompt aligned with the declaration agent's bound tools. */
+export function withGovernmentProjectRuntimeContext(
+  context: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    ...context,
+    government_project_tools: {
+      knowledge: true,
+      plan: true,
+      ...runtimeRecord(context.government_project_tools),
+      web: true,
+    },
+    government_project_capabilities: {
+      planMode: true,
+      thinking: true,
+      subagent: true,
+      memory: true,
+      knowledgeRag: true,
+      documentConversion: true,
+      guardrail: true,
+      ...runtimeRecord(context.government_project_capabilities),
+      webSearch: true,
+    },
+  };
+}
+
 export type ExecutionMode = "standard" | "deep";
 
 export function normalizeExecutionMode(value: unknown): ExecutionMode {
@@ -472,7 +504,7 @@ export async function streamRun({
     body: jsonBody({
       assistant_id: GOVERNMENT_PROJECT_ASSISTANT_ID,
       input: { messages: [{ type: "human", content }] },
-      context,
+      context: withGovernmentProjectRuntimeContext(context),
       stream_mode: ["messages", "updates", "custom"],
       if_not_exists: "create",
       on_disconnect: "continue",

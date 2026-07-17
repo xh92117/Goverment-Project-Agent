@@ -7,6 +7,7 @@ import {
   GOVERNMENT_PROJECT_ASSISTANT_ID,
   isRawKnowledgePayload,
   normalizeExecutionMode,
+  withGovernmentProjectRuntimeContext,
 } from "@/features/chat/api";
 
 describe("chat api stream message parsing", () => {
@@ -14,6 +15,20 @@ describe("chat api stream message parsing", () => {
     expect(normalizeExecutionMode("deep")).toBe("deep");
     expect(normalizeExecutionMode("standard")).toBe("standard");
     expect(normalizeExecutionMode("unknown")).toBe("standard");
+  });
+
+  it("always advertises web search for government-project runs", () => {
+    expect(
+      withGovernmentProjectRuntimeContext({
+        project_id: "project-1",
+        government_project_tools: { knowledge: false, web: false },
+        government_project_capabilities: { webSearch: false },
+      }),
+    ).toMatchObject({
+      project_id: "project-1",
+      government_project_tools: { knowledge: false, plan: true, web: true },
+      government_project_capabilities: { knowledgeRag: true, webSearch: true },
+    });
   });
 
   it("extracts AI text chunks from LangGraph message tuples", () => {
