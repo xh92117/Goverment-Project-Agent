@@ -1,4 +1,5 @@
 import io
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from zipfile import ZipFile
@@ -20,6 +21,14 @@ from deerflow.knowledge.assets import get_knowledge_asset, get_knowledge_evidenc
 from deerflow.knowledge.evidence_extraction import EvidenceExtractionResult, VisionModelUnavailableError, extract_evidence_from_image
 from deerflow.knowledge.schemas import KnowledgeEvidencePatch, KnowledgeIndexBuildRequest, KnowledgeIndexSearchRequest
 from deerflow.tools.builtins.knowledge_tools import knowledge_read_evidence_tool, knowledge_search_evidence_tool
+
+
+def test_pillow_is_declared_as_a_harness_base_dependency() -> None:
+    pyproject_path = Path(__file__).resolve().parents[1] / "packages" / "harness" / "pyproject.toml"
+    pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+    dependencies = pyproject["project"]["dependencies"]
+
+    assert any(dependency.lower().startswith("pillow") for dependency in dependencies)
 
 
 @pytest.fixture(autouse=True)

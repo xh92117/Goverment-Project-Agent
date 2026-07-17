@@ -136,12 +136,15 @@ def main() -> int:
         else:
             print("  INFO nginx (version unknown)")
     else:
-        print("  FAIL nginx not found")
-        print("    macOS:   brew install nginx")
-        print("    Ubuntu:  sudo apt install nginx")
-        print("    Windows: use WSL for local mode or use Docker mode")
-        print("    Or visit: https://nginx.org/en/download.html")
-        failed = True
+        if sys.platform == "win32":
+            print("  OPTIONAL nginx not found (not required for native Windows launcher)")
+            print("    Use start_web_agent.py for native Windows, or Docker for nginx routing")
+        else:
+            print("  FAIL nginx not found")
+            print("    macOS:   brew install nginx")
+            print("    Ubuntu:  sudo apt install nginx")
+            print("    Or visit: https://nginx.org/en/download.html")
+            failed = True
 
     print()
     if not failed:

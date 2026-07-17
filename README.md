@@ -70,10 +70,13 @@ C:\Users\users name\GP Agent
 | uv      | Python 依赖和虚拟环境管理                  |
 | Node.js | 推荐 `22 LTS`                              |
 | pnpm    | `10.26.2`，建议通过 Corepack 安装          |
+| Nginx   | Windows 原生启动时可选；本地反向代理模式需要 |
 | 网络    | 首次安装依赖、调用在线模型或联网检索时需要 |
 | Docker  | 可选，仅容器沙箱或 Docker 部署需要         |
 
 建议至少预留数 GB 磁盘空间；如运行本地大模型，CPU、内存和显存要求由所选模型决定。
+Windows 使用 `start_web_agent.py` 时不需要安装 nginx，`make check` 和 `make doctor`
+会将缺少 nginx 标记为可选警告；Docker 模式使用容器内的 nginx。
 
 检查已安装版本：
 
@@ -188,6 +191,8 @@ Pop-Location
 ```
 
 如果使用 Claude 或 Ollama，可在上述可选依赖列表中分别加入 `anthropic` 或 `ollama`。
+知识图片与 Word 图片导出在后端启动时会导入 Pillow；Pillow 已列为 Harness 基础依赖，
+执行 `uv sync --locked` 或 `make install` 会自动安装，无需再手动补装。
 
 ### 4.4 安装前端依赖
 

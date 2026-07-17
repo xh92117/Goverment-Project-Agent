@@ -79,7 +79,7 @@ When making code changes, you MUST update the relevant documentation:
 
 **Root directory** (for full application):
 ```bash
-make check      # Check system requirements
+make check      # Check system requirements (nginx is warning-only on native Windows)
 make install    # Install all dependencies (frontend + backend)
 make dev        # Start all services (Gateway + Frontend + Nginx), with config.yaml preflight
 make start      # Start production services locally
@@ -561,6 +561,10 @@ make dev
 ```
 
 This starts all services and makes the application available at `http://localhost:2026`.
+On native Windows, `start_web_agent.py` is the supported nginx-free launcher;
+both `make check` and `make doctor` treat a missing nginx executable as a warning.
+The local `make dev` / `make start` paths still use nginx, while Docker supplies
+nginx inside the container.
 
 **All startup modes:**
 
@@ -621,6 +625,10 @@ text-oriented LLM-Wiki map. `deerflow.knowledge.assets` stores originals,
 WebP thumbnails, a JSON registry, and generated `evidence.md` cards under the
 knowledge root `.assets/` directory. Only backward-compatible
 `entry_type=evidence` pointers are added to `index.json` and the SQLite sidecar.
+
+`deerflow.knowledge.assets` is imported by the Gateway startup path and imports
+Pillow directly, so `pillow` must remain a base `deerflow-harness` dependency;
+it cannot be supplied only through the optional `documents` extra.
 
 - Knowledge uploads accept JPG/JPEG/PNG/WebP/TIFF in addition to all legacy
   document formats. Legacy documents still go to `_incoming` unchanged.

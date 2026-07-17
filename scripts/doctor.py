@@ -195,13 +195,20 @@ def check_nginx() -> CheckResult:
         out = _run(["nginx", "-v"]) or ""
         version = out.split("/", 1)[-1] if "/" in out else out
         return CheckResult("nginx", "ok", version)
+    if sys.platform == "win32":
+        return CheckResult(
+            "nginx",
+            "warn",
+            "optional for the native Windows launcher",
+            fix="Use start_web_agent.py, or Docker when nginx routing is required",
+        )
     return CheckResult(
         "nginx",
         "fail",
         fix=(
             "macOS:   brew install nginx\n"
             "Ubuntu:  sudo apt install nginx\n"
-            "Windows: use WSL or Docker mode"
+            "Or visit: https://nginx.org/en/download.html"
         ),
     )
 

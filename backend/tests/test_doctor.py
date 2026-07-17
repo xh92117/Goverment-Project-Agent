@@ -23,6 +23,30 @@ class TestCheckPython:
 
 
 # ---------------------------------------------------------------------------
+# check_nginx
+# ---------------------------------------------------------------------------
+
+
+class TestCheckNginx:
+    def test_missing_nginx_is_warning_on_windows(self, monkeypatch):
+        monkeypatch.setattr(doctor.sys, "platform", "win32")
+        monkeypatch.setattr(doctor.shutil, "which", lambda _name: None)
+
+        result = doctor.check_nginx()
+
+        assert result.status == "warn"
+        assert "optional" in result.detail
+
+    def test_missing_nginx_fails_on_non_windows(self, monkeypatch):
+        monkeypatch.setattr(doctor.sys, "platform", "linux")
+        monkeypatch.setattr(doctor.shutil, "which", lambda _name: None)
+
+        result = doctor.check_nginx()
+
+        assert result.status == "fail"
+
+
+# ---------------------------------------------------------------------------
 # check_config_exists
 # ---------------------------------------------------------------------------
 
