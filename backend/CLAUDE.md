@@ -88,7 +88,8 @@ make stop       # Stop all services
 
 On native Windows, `start.bat` is the preferred entrypoint. It validates the
 installed backend/frontend dependency state, installs missing or changed
-dependencies, and then launches both services through `start_web_agent.py`.
+dependencies, including the base OpenAI-compatible, Anthropic, and DeepSeek
+provider adapters, and then launches both services through `start_web_agent.py`.
 
 **Backend directory** (for backend development only):
 ```bash

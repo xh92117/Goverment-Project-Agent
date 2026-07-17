@@ -27,7 +27,8 @@ def test_start_batch_checks_before_installing_and_launching() -> None:
 def test_start_batch_validates_backend_frontend_and_dependency_state() -> None:
     batch = _batch_text()
 
-    assert "from PIL import Image; from app.gateway.app import app" in batch
+    assert "from PIL import Image" in batch
+    assert "from app.gateway.app import app" in batch
     assert "frontend\\node_modules\\next\\dist\\bin\\next" in batch
     assert "backend\\uv.lock" in batch
     assert "frontend\\pnpm-lock.yaml" in batch

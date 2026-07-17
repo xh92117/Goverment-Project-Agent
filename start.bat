@@ -143,7 +143,7 @@ if exist "%DEPENDENCY_STATE_DIR%\installed.flag" (
 )
 
 pushd backend >nul
-"..\.venv\Scripts\python.exe" -c "from PIL import Image; from app.gateway.app import app" >nul 2>&1
+"..\.venv\Scripts\python.exe" -c "from PIL import Image; from langchain_anthropic import ChatAnthropic; from langchain_deepseek import ChatDeepSeek; from langchain_openai import ChatOpenAI; from app.gateway.app import app" >nul 2>&1
 set "BACKEND_CHECK=!ERRORLEVEL!"
 popd >nul
 if not "!BACKEND_CHECK!"=="0" exit /b 1
@@ -180,7 +180,7 @@ if errorlevel 1 (
     exit /b !INSTALL_EXIT!
 )
 
-uv pip install --link-mode copy --python "..\.venv\Scripts\python.exe" --editable ".\packages\harness[deepseek,openai,mcp,search,documents]"
+uv pip install --link-mode copy --python "..\.venv\Scripts\python.exe" --editable ".\packages\harness[mcp,search,documents]"
 if errorlevel 1 (
     set "INSTALL_EXIT=!ERRORLEVEL!"
     set "UV_PROJECT_ENVIRONMENT="

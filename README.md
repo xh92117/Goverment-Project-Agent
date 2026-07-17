@@ -184,16 +184,18 @@ Push-Location .\backend
 $env:UV_PROJECT_ENVIRONMENT = "..\.venv"
 uv sync --locked
 
-# 推荐功能集：DeepSeek、OpenAI 兼容模型、MCP、联网检索和文档解析
+# 推荐功能集：MCP、联网检索和文档解析
 uv pip install `
   --python "..\.venv\Scripts\python.exe" `
-  --editable ".\packages\harness[deepseek,openai,mcp,search,documents]"
+  --editable ".\packages\harness[mcp,search,documents]"
 Pop-Location
 ```
 
-如果使用 Claude 或 Ollama，可在上述可选依赖列表中分别加入 `anthropic` 或 `ollama`。
+如果使用 Gemini 或 Ollama，可在上述可选依赖列表中分别加入 `google` 或 `ollama`。
 知识图片与 Word 图片导出在后端启动时会导入 Pillow；Pillow 已列为 Harness 基础依赖，
 执行 `uv sync --locked` 或 `make install` 会自动安装，无需再手动补装。
+OpenAI 兼容接口、Anthropic Claude 和 DeepSeek 的模型适配包也已列为基础依赖，选择这些
+模型时不需要再单独安装 `openai`、`anthropic` 或 `deepseek` extra。
 
 ### 4.4 安装前端依赖
 
@@ -387,7 +389,7 @@ Windows 推荐从项目根目录双击 `start.bat`，或在 PowerShell 中执行
 .\start.bat
 ```
 
-脚本会先检查 Node.js 版本、后端关键依赖、Next.js 依赖以及依赖清单是否变化。依赖齐全时直接启动；
+脚本会先检查 Node.js 版本、Pillow 和核心模型适配器等后端关键依赖、Next.js 依赖以及依赖清单是否变化。依赖齐全时直接启动；
 缺失或依赖清单变化时，会自动安装 `uv`/`pnpm`（如有需要）、同步前后端依赖，再启动服务。
 Node.js 需要预先安装 22 或更高版本，因为批处理无法可靠地替用户选择系统级 Node.js 安装方式。
 
