@@ -98,27 +98,40 @@ Set-Location .\Goverment-Project-Agent
 
 #### 方式二：通过本地代理端口下载
 
-以下示例使用 HTTP 代理 `127.0.0.1:7897`，只对本次克隆生效：
+以下示例使用 HTTP/Mixed 代理端口 `7890`。该端口只是示例，必须替换为代理软件的
+实际监听端口，并先确认端口可连接：
 
 ```powershell
-git -c http.proxy=http://127.0.0.1:7897 clone https://github.com/xh92117/Goverment-Project-Agent.git
+$proxyPort = 7890
+$proxyUrl = "http://127.0.0.1:$proxyPort"
+Test-NetConnection 127.0.0.1 -Port $proxyPort
+
+git -c "http.proxy=$proxyUrl" clone https://github.com/xh92117/Goverment-Project-Agent.git
 Set-Location .\Goverment-Project-Agent
 ```
+
+只有检测结果为 `TcpTestSucceeded : True` 时，该代理端口才能使用。上述 `git -c`
+配置只对本次克隆生效，不会影响后续依赖安装。
 
 也可以临时设置当前 PowerShell 会话的代理：
 
 ```powershell
-$env:HTTP_PROXY = "http://127.0.0.1:7897"
-$env:HTTPS_PROXY = "http://127.0.0.1:7897"
+$proxyPort = 7890
+$proxyUrl = "http://127.0.0.1:$proxyPort"
+$env:HTTP_PROXY = $proxyUrl
+$env:HTTPS_PROXY = $proxyUrl
 git clone https://github.com/xh92117/Goverment-Project-Agent.git
 Set-Location .\Goverment-Project-Agent
 ```
 
-下载完成后如不再使用代理，可清除当前会话变量：
+`HTTP_PROXY` 和 `HTTPS_PROXY` 会被同一 PowerShell 窗口中随后运行的 `uv`、`pnpm`
+和 `make install` 继承。代理软件必须保持运行且端口正确；下载完成后如不再使用代理，
+应在安装依赖前清除当前会话变量：
 
 ```powershell
 Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
 Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
+Remove-Item Env:ALL_PROXY -ErrorAction SilentlyContinue
 ```
 
 #### 方式三：浏览器直接下载 ZIP
@@ -130,9 +143,12 @@ Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
 使用 PowerShell 和代理下载 ZIP：
 
 ```powershell
+$proxyPort = 7890
+$proxyUrl = "http://127.0.0.1:$proxyPort"
+
 Invoke-WebRequest `
   -Uri "https://github.com/xh92117/Goverment-Project-Agent/archive/refs/heads/main.zip" `
-  -Proxy "http://127.0.0.1:7897" `
+  -Proxy $proxyUrl `
   -OutFile ".\Goverment-Project-Agent.zip"
 
 Expand-Archive ".\Goverment-Project-Agent.zip" -DestinationPath "." -Force
@@ -185,46 +201,88 @@ Pop-Location
 `.venv/pnpm-store`。项目已启用复制与提升模式，以减少 Windows 因符号链接权限导致的
 `ERR_PNPM_EPERM` 安装失败。
 
-如果访问 npm 官方源较慢，可以通过本地 HTTP 或 Mixed 代理安装。以下示例使用
-`127.0.0.1:7890`，请按代理软件的实际监听端口修改：
+如果访问 npm 官方源较慢，推荐通过仅对当前 PowerShell 窗口生效的临时代理安装。
+以下示例仍使用 `7890`，请替换为代理软件的实际 HTTP/Mixed 端口：
+
+```powershell
+$proxyPort = 7890
+$proxyUrl = "http://127.0.0.1:$proxyPort"
+
+if (-not (Test-NetConnection 127.0.0.1 -Port $proxyPort -InformationLevel Quiet)) {
+    throw "本地代理端口 $proxyPort 未监听，请启动代理或修改端口。"
+}
+
+$env:HTTP_PROXY = $proxyUrl
+$env:HTTPS_PROXY = $proxyUrl
+
+Push-Location .\frontend
+try {
+    pnpm install --frozen-lockfile
+    if ($LASTEXITCODE -ne 0) {
+        throw "pnpm install 执行失败，退出码：$LASTEXITCODE"
+    }
+}
+finally {
+    Pop-Location
+    Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
+    Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
+}
+```
+
+即使 npm 源使用 HTTPS，代理地址通常仍写为 `http://`，由代理通过 HTTP CONNECT
+建立 HTTPS 隧道。不建议把一次性代理默认写入 pnpm 持久配置；如果确实需要跨会话使用，
+可以配置并在不再使用时删除：
 
 ```powershell
 pnpm config set proxy "http://127.0.0.1:7890"
 pnpm config set https-proxy "http://127.0.0.1:7890"
-pnpm config set registry "https://registry.npmjs.org"
 
 pnpm config get proxy
 pnpm config get https-proxy
-pnpm install --frozen-lockfile
-```
 
-即使 npm 源使用 HTTPS，代理地址通常仍写为 `http://`，由代理通过 HTTP CONNECT
-建立 HTTPS 隧道。安装完成后如不再使用代理，可清除持久配置：
-
-```powershell
 pnpm config delete proxy
 pnpm config delete https-proxy
 ```
 
-如只想让代理在当前 PowerShell 窗口中临时生效，可以改用环境变量：
+建议使用代理软件提供的 HTTP 或 Mixed 端口；pnpm 不应直接配置为仅支持 SOCKS 的端口。
+
+如果出现 `connect ECONNREFUSED 127.0.0.1:<端口>`，说明 pnpm 已启用本地代理，
+但该端口没有代理服务监听。可以用以下命令检查代理来源：
 
 ```powershell
-$env:HTTP_PROXY = "http://127.0.0.1:7890"
-$env:HTTPS_PROXY = "http://127.0.0.1:7890"
-
-pnpm install --frozen-lockfile
-
-Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
-Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
+Get-ChildItem Env: | Where-Object Name -Match "proxy"
+pnpm config get proxy
+pnpm config get https-proxy
 ```
 
-建议使用代理软件提供的 HTTP 或 Mixed 端口；pnpm 不应直接配置为仅支持 SOCKS 的端口。
+如果决定不使用代理，应同时清除当前会话变量和可能存在的持久配置，然后直接重试安装：
+
+```powershell
+Remove-Item Env:HTTP_PROXY -ErrorAction SilentlyContinue
+Remove-Item Env:HTTPS_PROXY -ErrorAction SilentlyContinue
+Remove-Item Env:ALL_PROXY -ErrorAction SilentlyContinue
+
+pnpm config delete proxy
+pnpm config delete https-proxy
+npm config delete proxy
+npm config delete https-proxy
+
+Push-Location .\frontend
+pnpm install --frozen-lockfile
+Pop-Location
+```
+
+失败后不需要删除 `pnpm-lock.yaml`、`node_modules` 或 pnpm 缓存；修正网络或代理配置后，
+pnpm 会继续复用已经下载的依赖。
 
 如果已安装 Make，也可以用以下命令安装基础依赖：
 
 ```powershell
 make install
 ```
+
+`make install` 会继承当前 PowerShell 环境变量和 pnpm 持久代理配置。执行前应确认代理
+仍在运行且端口正确，或者按上述命令先清除不再使用的代理。
 
 ### 4.5 创建本地配置
 
