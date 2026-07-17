@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 START_BATCH_PATH = REPO_ROOT / "start.bat"
@@ -45,3 +46,31 @@ def test_default_user_root_uses_the_active_user_home(monkeypatch, tmp_path: Path
     monkeypatch.setattr(module.Path, "home", classmethod(lambda _cls: tmp_path))
 
     assert module.default_user_root() == tmp_path / "GP Agent"
+
+
+def test_start_environment_derives_all_paths_from_gp_agent_home(monkeypatch, tmp_path: Path) -> None:
+    spec = importlib.util.spec_from_file_location("gp_start_web_agent_env", START_SCRIPT_PATH)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    root = tmp_path / "custom-gp-agent"
+    monkeypatch.setattr(module.os, "environ", {})
+    monkeypatch.setattr(module, "load_dotenv", lambda env: env.update({"GP_AGENT_HOME": str(root)}))
+
+    env = module.build_env(
+        SimpleNamespace(
+            log_dir=None,
+            host="127.0.0.1",
+            backend_port=10086,
+            frontend_port=9527,
+            network_proxy="",
+        )
+    )
+
+    assert env["AGENT_BASE_HOME"] == str(root / ".agent-base")
+    assert env["GOVERNMENT_PROJECT_WORKSPACE_ROOT"] == str(root / "workspace")
+    assert env["AGENT_BASE_KNOWLEDGE_ROOT"] == str(root / "workspace" / "knowledge_base")
+    assert env["GOVERNMENT_PROJECT_DRAFTS_ROOT"] == str(root / "workspace" / "proposal_drafts")
+    assert env["GOVERNMENT_PROJECT_PROJECTS_ROOT"] == str(root / "workspace" / "projects")
+    assert env["GOVERNMENT_PROJECT_LOG_ROOT"] == str(root / "logs")

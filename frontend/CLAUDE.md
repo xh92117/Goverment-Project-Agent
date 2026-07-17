@@ -102,6 +102,12 @@ is eligible. Normal evidence can be batch-confirmed; `non_evidence_image`
 entries require a separate explicit “标记无关图片” action. Always show updated
 and skipped counts returned by the batch API.
 
+The settings page owns external runtime storage configuration. Its “存储目录”
+tab reads and writes `/api/settings/runtime-paths`; the backend persists
+`GP_AGENT_HOME` and related derived directory variables in the root `.env`.
+Keep the restart-required notice because live database and workspace handles
+must not be moved while the services are running.
+
 ## Code Style
 
 - Use the existing `src/core/*` domain boundaries.

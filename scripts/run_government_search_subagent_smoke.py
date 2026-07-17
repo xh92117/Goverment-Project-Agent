@@ -17,11 +17,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from dotenv import load_dotenv
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = REPO_ROOT / "backend"
-DEFAULT_RUNTIME_HOME = Path(r"C:\Users\Administrator\GP Agent\.agent-base")
-DEFAULT_WORKSPACE_ROOT = Path(r"C:\Users\Administrator\GP Agent\workspace")
+HARNESS_DIR = BACKEND_DIR / "packages" / "harness"
+if str(HARNESS_DIR) not in sys.path:
+    sys.path.insert(0, str(HARNESS_DIR))
 
 
 PROMPT = """\
@@ -54,17 +56,23 @@ def configure_utf8_stdio() -> None:
 
 
 def configure_environment(args: argparse.Namespace) -> None:
+    from deerflow.government_project_workspace import resolve_government_project_paths
+
+    load_dotenv(REPO_ROOT / ".env", override=False)
+    paths = resolve_government_project_paths(allow_runtime_inside_source=False)
     os.environ.setdefault("PYTHONUTF8", "1")
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
     os.environ.setdefault("AGENT_BASE_PROJECT_ROOT", str(REPO_ROOT))
     os.environ.setdefault("AGENT_BASE_CONFIG_PATH", str(REPO_ROOT / "config.yaml"))
-    os.environ.setdefault("AGENT_BASE_HOME", str(args.runtime_home))
+    os.environ.setdefault("GP_AGENT_HOME", str(paths.gp_agent_home))
+    os.environ.setdefault("AGENT_BASE_HOME", str(args.runtime_home or paths.runtime_home))
     os.environ.setdefault("DEER_FLOW_HOME", os.environ["AGENT_BASE_HOME"])
     os.environ.setdefault("AGENT_BASE_HOST_BASE_DIR", os.environ["AGENT_BASE_HOME"])
-    os.environ.setdefault("GOVERNMENT_PROJECT_WORKSPACE_ROOT", str(DEFAULT_WORKSPACE_ROOT))
-    os.environ.setdefault("AGENT_BASE_KNOWLEDGE_ROOT", str(DEFAULT_WORKSPACE_ROOT / "knowledge_base"))
-    os.environ.setdefault("GOVERNMENT_PROJECT_DRAFTS_ROOT", str(DEFAULT_WORKSPACE_ROOT / "proposal_drafts"))
-    os.environ.setdefault("GOVERNMENT_PROJECT_LOG_ROOT", str(DEFAULT_WORKSPACE_ROOT / "logs"))
+    os.environ.setdefault("GOVERNMENT_PROJECT_WORKSPACE_ROOT", str(paths.workspace_root))
+    os.environ.setdefault("AGENT_BASE_KNOWLEDGE_ROOT", str(paths.knowledge_root))
+    os.environ.setdefault("GOVERNMENT_PROJECT_DRAFTS_ROOT", str(paths.drafts_root))
+    os.environ.setdefault("GOVERNMENT_PROJECT_PROJECTS_ROOT", str(paths.projects_root))
+    os.environ.setdefault("GOVERNMENT_PROJECT_LOG_ROOT", str(paths.logs_root))
     os.environ.setdefault("AGENT_BASE_DB_PATH", str(Path(os.environ["AGENT_BASE_HOME"]) / "data" / "agent_base.db"))
 
     python_paths = [str(BACKEND_DIR), str(BACKEND_DIR / "packages" / "harness")]
@@ -184,7 +192,7 @@ def main() -> int:
     parser.add_argument("--model", default="deepseek-v4-pro")
     parser.add_argument("--agent-name", default="government-project-declaration")
     parser.add_argument("--thread-id", default="gov_search_dynamic_resilient_modulus_subagent_smoke")
-    parser.add_argument("--runtime-home", type=Path, default=DEFAULT_RUNTIME_HOME)
+    parser.add_argument("--runtime-home", type=Path, default=None)
     parser.add_argument("--recursion-limit", type=int, default=120)
     args = parser.parse_args()
 

@@ -23,6 +23,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from deerflow.government_project_workspace import resolve_government_project_paths
+
 ROOT = Path(__file__).resolve().parent
 BACKEND_DIR = ROOT / "backend"
 FRONTEND_DIR = ROOT / "frontend"
@@ -32,13 +34,13 @@ FRONTEND_NODE_MODULES_DIR = FRONTEND_DIR / "node_modules"
 
 def default_user_root() -> Path:
     """Return the external runtime root for the active Windows user."""
-    return Path.home() / "GP Agent"
+    return resolve_government_project_paths({}, user_home=Path.home()).gp_agent_home
 
 
 DEFAULT_USER_ROOT = default_user_root()
 DEFAULT_RUNTIME_HOME = DEFAULT_USER_ROOT / ".agent-base"
 DEFAULT_WORKSPACE_ROOT = DEFAULT_USER_ROOT / "workspace"
-DEFAULT_LOG_ROOT = ROOT / ".tools" / "logs"
+DEFAULT_LOG_ROOT = DEFAULT_USER_ROOT / "logs"
 DEFAULT_NODE = (
     Path.home()
     / ".cache"
@@ -78,8 +80,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--log-dir",
-        default=str(DEFAULT_LOG_ROOT),
-        help="Directory for backend/frontend startup logs. Defaults to the project .tools/logs directory.",
+        default=None,
+        help="Directory for backend/frontend startup logs. Defaults to GP_AGENT_HOME/logs.",
     )
     reload_group = parser.add_mutually_exclusive_group()
     reload_group.add_argument("--reload", dest="reload", action="store_true", help="Enable backend uvicorn reload.")
@@ -322,37 +324,30 @@ def build_env(args: argparse.Namespace) -> dict[str, str]:
     env.setdefault("PYTHONUTF8", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("AGENT_BASE_PROJECT_ROOT", str(ROOT))
-    env.setdefault("AGENT_BASE_HOME", str(DEFAULT_RUNTIME_HOME))
-    env.setdefault("DEER_FLOW_HOME", env["AGENT_BASE_HOME"])
-    env.setdefault("AGENT_BASE_HOST_BASE_DIR", env["AGENT_BASE_HOME"])
-    env.setdefault("GOVERNMENT_PROJECT_WORKSPACE_ROOT", str(DEFAULT_WORKSPACE_ROOT))
-    env.setdefault("AGENT_BASE_KNOWLEDGE_ROOT", str(Path(env["GOVERNMENT_PROJECT_WORKSPACE_ROOT"]) / "knowledge_base"))
-    env.setdefault("GOVERNMENT_PROJECT_DRAFTS_ROOT", str(Path(env["GOVERNMENT_PROJECT_WORKSPACE_ROOT"]) / "proposal_drafts"))
-    env["GOVERNMENT_PROJECT_LOG_ROOT"] = str(Path(args.log_dir))
+    if args.log_dir:
+        env["GOVERNMENT_PROJECT_LOG_ROOT"] = str(Path(args.log_dir))
+    try:
+        paths = resolve_government_project_paths(env, allow_runtime_inside_source=False)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
-    workspace_root = ensure_external_runtime_path(Path(env["GOVERNMENT_PROJECT_WORKSPACE_ROOT"]), "Invalid workspace path")
-    runtime_home = ensure_external_runtime_path(Path(env["AGENT_BASE_HOME"]), "Invalid runtime home")
-    host_base_dir = ensure_external_runtime_path(Path(env["AGENT_BASE_HOST_BASE_DIR"]), "Invalid host runtime home")
-    knowledge_root = ensure_external_runtime_path(Path(env["AGENT_BASE_KNOWLEDGE_ROOT"]), "Invalid knowledge-base path")
-    drafts_root = ensure_external_runtime_path(Path(env["GOVERNMENT_PROJECT_DRAFTS_ROOT"]), "Invalid proposal-drafts path")
-    log_root = ensure_runtime_path(Path(env["GOVERNMENT_PROJECT_LOG_ROOT"]), "Invalid log directory", allow_inside_source=True)
-
-    env["AGENT_BASE_HOME"] = str(runtime_home)
+    env["GP_AGENT_HOME"] = str(paths.gp_agent_home)
+    env["AGENT_BASE_HOME"] = str(paths.runtime_home)
     env["DEER_FLOW_HOME"] = env["AGENT_BASE_HOME"]
-    env["AGENT_BASE_HOST_BASE_DIR"] = str(host_base_dir)
-    env["GOVERNMENT_PROJECT_WORKSPACE_ROOT"] = str(workspace_root)
-    env["AGENT_BASE_KNOWLEDGE_ROOT"] = str(knowledge_root)
-    env["GOVERNMENT_PROJECT_DRAFTS_ROOT"] = str(drafts_root)
-    env["GOVERNMENT_PROJECT_LOG_ROOT"] = str(log_root)
-    env.setdefault("AGENT_BASE_DB_PATH", str(runtime_home / "data" / "agent_base.db"))
-    db_path = ensure_external_runtime_path(Path(env["AGENT_BASE_DB_PATH"]), "Invalid database path")
-    env["AGENT_BASE_DB_PATH"] = str(db_path)
+    env["AGENT_BASE_HOST_BASE_DIR"] = str(paths.host_base_dir)
+    env["GOVERNMENT_PROJECT_WORKSPACE_ROOT"] = str(paths.workspace_root)
+    env["AGENT_BASE_KNOWLEDGE_ROOT"] = str(paths.knowledge_root)
+    env["GOVERNMENT_PROJECT_DRAFTS_ROOT"] = str(paths.drafts_root)
+    env["GOVERNMENT_PROJECT_PROJECTS_ROOT"] = str(paths.projects_root)
+    env["GOVERNMENT_PROJECT_LOG_ROOT"] = str(paths.logs_root)
+    env["AGENT_BASE_DB_PATH"] = str(paths.db_path)
 
-    workspace_root.mkdir(parents=True, exist_ok=True)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    knowledge_root.mkdir(parents=True, exist_ok=True)
-    drafts_root.mkdir(parents=True, exist_ok=True)
-    log_root.mkdir(parents=True, exist_ok=True)
+    paths.workspace_root.mkdir(parents=True, exist_ok=True)
+    paths.db_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.knowledge_root.mkdir(parents=True, exist_ok=True)
+    paths.drafts_root.mkdir(parents=True, exist_ok=True)
+    paths.projects_root.mkdir(parents=True, exist_ok=True)
+    paths.logs_root.mkdir(parents=True, exist_ok=True)
     python_paths = [
         str(BACKEND_DIR),
         str(BACKEND_DIR / "packages" / "harness"),
@@ -441,7 +436,7 @@ def main() -> int:
         raise SystemExit(f"Frontend port is already in use: {args.host}:{args.frontend_port}")
 
     env = build_env(args)
-    log_dir = ensure_runtime_path(Path(env["GOVERNMENT_PROJECT_LOG_ROOT"]), "Invalid log directory", allow_inside_source=True)
+    log_dir = ensure_runtime_path(Path(env["GOVERNMENT_PROJECT_LOG_ROOT"]), "Invalid log directory")
     backend_cmd = [
         str(backend_python),
         "-m",

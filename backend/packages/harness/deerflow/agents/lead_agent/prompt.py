@@ -7,6 +7,7 @@ from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from deerflow.config.agents_config import load_agent_soul
+from deerflow.government_project_workspace import government_project_workspace_root
 from deerflow.skills.storage import get_or_new_skill_storage
 from deerflow.skills.types import Skill, SkillCategory
 from deerflow.subagents import get_available_subagent_names
@@ -797,6 +798,7 @@ def _build_government_project_section(
         "indexes, tool payloads, or full knowledge records."
     )
     language = output_language if isinstance(output_language, str) and output_language.strip() else "zh-CN"
+    workspace_root = government_project_workspace_root()
 
     return f"""<government_project_declaration_runtime>
 The frontend has selected the Government Research Project Declaration workflow.
@@ -834,7 +836,7 @@ Runtime answer preferences:
 
 Runtime path isolation:
 - The source-code directory is for application code only. Never store government-project runtime data, knowledge-base files, proposal drafts, uploads, generated artifacts, or startup logs under the source-code directory.
-- Use the configured external C drive workspace for runtime data: `C:\\Users\\Administrator\\GP Agent\\workspace`.
+- Use the configured external workspace for runtime data: `{workspace_root}`.
 - Keep knowledge-base files under the configured knowledge root, proposal drafts under the configured drafts root, and startup/runtime logs under the configured logs root.
 - If a requested runtime path points inside the source-code directory, stop and report the path isolation violation instead of writing there.
 

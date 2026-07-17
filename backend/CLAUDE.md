@@ -90,6 +90,9 @@ On native Windows, `start.bat` is the preferred entrypoint. It validates the
 installed backend/frontend dependency state, installs missing or changed
 dependencies, including the base OpenAI-compatible, Anthropic, and DeepSeek
 provider adapters, and then launches both services through `start_web_agent.py`.
+Government-project data paths are resolved through `GP_AGENT_HOME` and the
+individual overrides in `.env`; the admin-only `/api/settings/runtime-paths`
+endpoint updates those keys and requires a process restart before they apply.
 
 **Backend directory** (for backend development only):
 ```bash

@@ -39,9 +39,11 @@ def _clear_path_env(monkeypatch):
         "DEER_FLOW_REPO_ROOT",
         "DEER_FLOW_SKILLS_PATH",
         "DEER_FLOW_DOCKER_SOCKET",
+        "GP_AGENT_HOME",
         "GOVERNMENT_PROJECT_WORKSPACE_ROOT",
         "AGENT_BASE_KNOWLEDGE_ROOT",
         "GOVERNMENT_PROJECT_DRAFTS_ROOT",
+        "GOVERNMENT_PROJECT_PROJECTS_ROOT",
         "GOVERNMENT_PROJECT_LOG_ROOT",
     ):
         monkeypatch.delenv(name, raising=False)
@@ -290,15 +292,45 @@ def test_extensions_config_falls_back_to_legacy_when_project_root_lacks_file(tmp
     assert ExtensionsConfig.resolve_config_path() == legacy_extensions
 
 
-def test_government_project_runtime_defaults_to_external_c_workspace(monkeypatch):
-    _clear_path_env(monkeypatch)
+def test_government_project_runtime_defaults_to_active_user_home(tmp_path):
+    paths = gp_workspace.resolve_government_project_paths({}, user_home=tmp_path)
 
-    workspace = gp_workspace.government_project_workspace_root()
+    assert paths.gp_agent_home == tmp_path / "GP Agent"
+    assert paths.runtime_home == paths.gp_agent_home / ".agent-base"
+    assert paths.workspace_root == paths.gp_agent_home / "workspace"
+    assert paths.knowledge_root == paths.workspace_root / "knowledge_base"
+    assert paths.drafts_root == paths.workspace_root / "proposal_drafts"
+    assert paths.projects_root == paths.workspace_root / "projects"
+    assert paths.logs_root == paths.gp_agent_home / "logs"
 
-    assert workspace == Path(r"C:\Users\Administrator\GP Agent\workspace")
-    assert gp_workspace.government_project_knowledge_root() == workspace / "knowledge_base"
-    assert gp_workspace.government_project_drafts_root() == workspace / "proposal_drafts"
-    assert gp_workspace.government_project_logs_root() == workspace / "logs"
+
+def test_government_project_runtime_honors_root_and_child_overrides(tmp_path):
+    root = tmp_path / "custom-gp-agent"
+    custom_knowledge = tmp_path / "shared-knowledge"
+
+    paths = gp_workspace.resolve_government_project_paths(
+        {
+            "GP_AGENT_HOME": str(root),
+            "AGENT_BASE_KNOWLEDGE_ROOT": str(custom_knowledge),
+        }
+    )
+
+    assert paths.gp_agent_home == root
+    assert paths.runtime_home == root / ".agent-base"
+    assert paths.workspace_root == root / "workspace"
+    assert paths.knowledge_root == custom_knowledge
+
+
+def test_government_project_runtime_allows_container_managed_runtime_home(tmp_path):
+    container_runtime = gp_workspace.repo_root() / "backend" / ".agent-base"
+
+    paths = gp_workspace.resolve_government_project_paths(
+        {"AGENT_BASE_HOME": str(container_runtime)},
+        user_home=tmp_path,
+    )
+
+    assert paths.runtime_home == container_runtime
+    assert paths.workspace_root == tmp_path / "GP Agent" / "workspace"
 
 
 @pytest.mark.parametrize(

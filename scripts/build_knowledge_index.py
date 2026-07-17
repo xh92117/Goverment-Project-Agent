@@ -16,9 +16,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-DEFAULT_USER_ROOT = Path(r"C:\Users\Administrator\GP Agent")
-DEFAULT_RUNTIME_HOME = DEFAULT_USER_ROOT / ".agent-base"
-DEFAULT_WORKSPACE_ROOT = DEFAULT_USER_ROOT / "workspace"
+from dotenv import load_dotenv
 
 
 def _repo_root() -> Path:
@@ -96,14 +94,21 @@ def _merge_cli(args: argparse.Namespace, config: dict[str, Any]) -> dict[str, An
 def main() -> int:
     _configure_stdio()
     _configure_imports()
-    runtime_home = _ensure_outside_code_tree(DEFAULT_RUNTIME_HOME, purpose="AGENT_BASE_HOME")
-    workspace_root = _ensure_outside_code_tree(DEFAULT_WORKSPACE_ROOT, purpose="GOVERNMENT_PROJECT_WORKSPACE_ROOT")
-    knowledge_root = _ensure_outside_code_tree(workspace_root / "knowledge_base", purpose="AGENT_BASE_KNOWLEDGE_ROOT")
+    load_dotenv(_repo_root() / ".env", override=False)
+    from deerflow.government_project_workspace import resolve_government_project_paths
+
+    paths = resolve_government_project_paths(allow_runtime_inside_source=False)
     os.environ.setdefault("AGENT_BASE_PROJECT_ROOT", str(_repo_root()))
-    os.environ.setdefault("AGENT_BASE_HOME", str(runtime_home))
+    os.environ.setdefault("GP_AGENT_HOME", str(paths.gp_agent_home))
+    os.environ.setdefault("AGENT_BASE_HOME", str(paths.runtime_home))
     os.environ.setdefault("DEER_FLOW_HOME", os.environ["AGENT_BASE_HOME"])
-    os.environ.setdefault("GOVERNMENT_PROJECT_WORKSPACE_ROOT", str(workspace_root))
-    os.environ.setdefault("AGENT_BASE_KNOWLEDGE_ROOT", str(knowledge_root))
+    os.environ.setdefault("AGENT_BASE_HOST_BASE_DIR", str(paths.host_base_dir))
+    os.environ.setdefault("GOVERNMENT_PROJECT_WORKSPACE_ROOT", str(paths.workspace_root))
+    os.environ.setdefault("AGENT_BASE_KNOWLEDGE_ROOT", str(paths.knowledge_root))
+    os.environ.setdefault("GOVERNMENT_PROJECT_DRAFTS_ROOT", str(paths.drafts_root))
+    os.environ.setdefault("GOVERNMENT_PROJECT_PROJECTS_ROOT", str(paths.projects_root))
+    os.environ.setdefault("GOVERNMENT_PROJECT_LOG_ROOT", str(paths.logs_root))
+    os.environ.setdefault("AGENT_BASE_DB_PATH", str(paths.db_path))
 
     parser = argparse.ArgumentParser(description="Build LLM-Wiki knowledge indexes.")
     parser.add_argument("--config", type=Path, help="UTF-8 JSON config file.")

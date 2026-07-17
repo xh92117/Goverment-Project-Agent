@@ -75,6 +75,10 @@ src/
 - `src/core/threads/hooks.ts` owns pre-submit upload state and thread submission.
 - `src/core/api/stream-mode.ts` owns stream mode selection and fallbacks.
 - `src/core/auth/*` is optional and should stay gated by local-auth flags.
+- `src/features/settings/settings-page.tsx` owns runtime storage-path editing.
+  It persists only through the admin-only `/api/settings/runtime-paths` API,
+  which updates the project `.env`; path changes require a backend/frontend
+  restart and the UI must keep that restart notice visible after saving.
 
 ## Contributing
 

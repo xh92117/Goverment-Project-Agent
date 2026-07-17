@@ -106,6 +106,29 @@ export interface PdfParserConfigUpdate {
   pdf_converter: PdfConverter;
 }
 
+export interface RuntimePathConfig {
+  gp_agent_home: string;
+  runtime_home: string;
+  workspace_root: string;
+  knowledge_root: string;
+  drafts_root: string;
+  projects_root: string;
+  logs_root: string;
+  env_path: string;
+  restart_required: boolean;
+}
+
+export type RuntimePathConfigUpdate = Pick<
+  RuntimePathConfig,
+  | "gp_agent_home"
+  | "runtime_home"
+  | "workspace_root"
+  | "knowledge_root"
+  | "drafts_root"
+  | "projects_root"
+  | "logs_root"
+>;
+
 export interface Agent {
   name: string;
   description?: string;
@@ -216,6 +239,17 @@ export function loadPdfParserConfig() {
 
 export function updatePdfParserConfig(config: PdfParserConfigUpdate) {
   return apiJson<PdfParserConfig>("/api/settings/pdf-parser", {
+    method: "PUT",
+    body: jsonBody(config),
+  });
+}
+
+export function loadRuntimePathConfig() {
+  return apiJson<RuntimePathConfig>("/api/settings/runtime-paths");
+}
+
+export function updateRuntimePathConfig(config: RuntimePathConfigUpdate) {
+  return apiJson<RuntimePathConfig>("/api/settings/runtime-paths", {
     method: "PUT",
     body: jsonBody(config),
   });

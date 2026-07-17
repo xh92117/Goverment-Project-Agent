@@ -36,13 +36,18 @@
 运行态数据默认不写入源码目录，而是放在：
 
 ```text
-C:\Users\Administrator\GP Agent
+%USERPROFILE%\GP Agent
 ├─ .agent-base\             数据库、线程、运行状态
-└─ workspace\
+├─ workspace\
    ├─ knowledge_base\       知识库根目录
    ├─ proposal_drafts\      申报草稿与保存的 Markdown 产物
-   └─ logs\                 后端和前端启动日志
+   └─ projects\             项目资料
+└─ logs\                     后端和前端启动日志
 ```
+
+可在根目录 `.env` 中设置 `GP_AGENT_HOME` 或各子目录环境变量，也可以在前端
+“设置 → 存储目录”中修改；前端保存会更新 `.env`，重启前后端后生效。
+修改路径不会自动搬移旧数据；需要保留历史数据时，请先停止服务再复制原目录。
 
 ## 环境要求
 
@@ -208,7 +213,7 @@ http://127.0.0.1:9527
 默认知识库目录：
 
 ```text
-C:\Users\Administrator\GP Agent\workspace\knowledge_base
+%USERPROFILE%\GP Agent\workspace\knowledge_base
 ```
 
 推荐资料组织方式：

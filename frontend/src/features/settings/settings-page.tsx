@@ -5,6 +5,7 @@ import {
   BotIcon,
   CheckCircle2Icon,
   FileTextIcon,
+  HardDriveIcon,
   Loader2Icon,
   PlugIcon,
   PlusIcon,
@@ -20,6 +21,7 @@ import {
   createMemoryFact,
   listAgents,
   loadPdfParserConfig,
+  loadRuntimePathConfig,
   loadManagedModels,
   loadMcpConfig,
   loadMemory,
@@ -30,6 +32,7 @@ import {
   setSkillEnabled,
   testModel,
   updatePdfParserConfig,
+  updateRuntimePathConfig,
   updateMemoryConfig,
   uploadSkill,
   listChannels,
@@ -39,10 +42,18 @@ import type {
   MCPConfig,
   PdfParserConfig,
   PdfParserConfigUpdate,
+  RuntimePathConfig,
+  RuntimePathConfigUpdate,
 } from "@/features/settings/api";
 import { modelProviderOptions } from "@/features/settings/model-providers";
 
-type SettingsTab = "providers" | "skills" | "pdf" | "mcp" | "memory";
+type SettingsTab =
+  | "providers"
+  | "storage"
+  | "skills"
+  | "pdf"
+  | "mcp"
+  | "memory";
 
 const tabs: Array<{
   id: SettingsTab;
@@ -50,6 +61,7 @@ const tabs: Array<{
   icon: typeof Settings2Icon;
 }> = [
   { id: "providers", label: "模型供应商", icon: BotIcon },
+  { id: "storage", label: "存储目录", icon: HardDriveIcon },
   { id: "skills", label: "智能体技能", icon: Settings2Icon },
   { id: "pdf", label: "PDF 解析", icon: FileTextIcon },
   { id: "mcp", label: "MCP 接入", icon: PlugIcon },
@@ -75,6 +87,16 @@ const defaultPdfParserForm: PdfParserConfigUpdate = {
   pdf_converter: "auto",
 };
 
+const defaultRuntimePathForm: RuntimePathConfigUpdate = {
+  gp_agent_home: "",
+  runtime_home: "",
+  workspace_root: "",
+  knowledge_root: "",
+  drafts_root: "",
+  projects_root: "",
+  logs_root: "",
+};
+
 function optionalTrim(value: string | undefined) {
   const trimmed = value?.trim();
   if (!trimmed) return undefined;
@@ -97,6 +119,39 @@ function pdfParserFormFromConfig(
   };
 }
 
+function runtimePathFormFromConfig(
+  config: RuntimePathConfig,
+): RuntimePathConfigUpdate {
+  return {
+    gp_agent_home: config.gp_agent_home,
+    runtime_home: config.runtime_home,
+    workspace_root: config.workspace_root,
+    knowledge_root: config.knowledge_root,
+    drafts_root: config.drafts_root,
+    projects_root: config.projects_root,
+    logs_root: config.logs_root,
+  };
+}
+
+function joinRuntimePath(root: string, ...parts: string[]) {
+  const trimmed = root.trim().replace(/[\\/]+$/, "");
+  const separator = trimmed.includes("\\") ? "\\" : "/";
+  return [trimmed, ...parts].filter(Boolean).join(separator);
+}
+
+function derivedRuntimePathForm(root: string): RuntimePathConfigUpdate {
+  const workspace = joinRuntimePath(root, "workspace");
+  return {
+    gp_agent_home: root.trim(),
+    runtime_home: joinRuntimePath(root, ".agent-base"),
+    workspace_root: workspace,
+    knowledge_root: joinRuntimePath(workspace, "knowledge_base"),
+    drafts_root: joinRuntimePath(workspace, "proposal_drafts"),
+    projects_root: joinRuntimePath(workspace, "projects"),
+    logs_root: joinRuntimePath(root, "logs"),
+  };
+}
+
 export function SettingsPage() {
   const queryClient = useQueryClient();
   const skillUploadRef = useRef<HTMLInputElement | null>(null);
@@ -108,6 +163,9 @@ export function SettingsPage() {
   const [pdfParserForm, setPdfParserForm] =
     useState<PdfParserConfigUpdate>(defaultPdfParserForm);
   const [pdfParserMessage, setPdfParserMessage] = useState("");
+  const [runtimePathForm, setRuntimePathForm] =
+    useState<RuntimePathConfigUpdate>(defaultRuntimePathForm);
+  const [runtimePathMessage, setRuntimePathMessage] = useState("");
   const [memoryFact, setMemoryFact] = useState("");
   const [testResult, setTestResult] = useState<Record<string, string>>({});
 
@@ -120,6 +178,10 @@ export function SettingsPage() {
   const pdfParser = useQuery({
     queryKey: ["pdf-parser-config"],
     queryFn: loadPdfParserConfig,
+  });
+  const runtimePaths = useQuery({
+    queryKey: ["runtime-path-config"],
+    queryFn: loadRuntimePathConfig,
   });
   const memory = useQuery({ queryKey: ["memory"], queryFn: loadMemory });
   const memoryConfig = useQuery({
@@ -137,6 +199,11 @@ export function SettingsPage() {
     if (pdfParser.data)
       setPdfParserForm(pdfParserFormFromConfig(pdfParser.data));
   }, [pdfParser.data]);
+
+  useEffect(() => {
+    if (runtimePaths.data)
+      setRuntimePathForm(runtimePathFormFromConfig(runtimePaths.data));
+  }, [runtimePaths.data]);
 
   const createModel = useMutation({
     mutationFn: () =>
@@ -202,6 +269,22 @@ export function SettingsPage() {
     },
   });
 
+  const saveRuntimePaths = useMutation({
+    mutationFn: () => updateRuntimePathConfig(runtimePathForm),
+    onSuccess: async (config) => {
+      setRuntimePathForm(runtimePathFormFromConfig(config));
+      setRuntimePathMessage("已写入 .env，请重启前后端后生效");
+      await queryClient.invalidateQueries({
+        queryKey: ["runtime-path-config"],
+      });
+    },
+    onError: (error) => {
+      setRuntimePathMessage(
+        error instanceof Error ? error.message : "保存失败",
+      );
+    },
+  });
+
   const saveMemory = useMutation({
     mutationFn: () =>
       updateMemoryConfig({
@@ -233,7 +316,9 @@ export function SettingsPage() {
       <header className="main-head">
         <div>
           <div className="mh-title">设置</div>
-          <div className="mh-breadcrumb">模型、技能、MCP、记忆与通道配置</div>
+          <div className="mh-breadcrumb">
+            模型、存储、技能、MCP、记忆与通道配置
+          </div>
         </div>
       </header>
 
@@ -393,6 +478,92 @@ export function SettingsPage() {
                   </div>
                 </div>
               ) : null}
+            </div>
+          ) : null}
+
+          {tab === "storage" ? (
+            <div className="settings-panel">
+              <div className="sc-title">存储目录</div>
+              <div className="settings-status-row">
+                <div className="provider-info">
+                  <strong>GP Agent 运行数据</strong>
+                  <span>
+                    保存会更新{" "}
+                    {runtimePaths.data?.env_path ?? "项目根目录 .env"}
+                    ，重启前后端后生效；不会自动搬移旧目录中的数据
+                  </span>
+                </div>
+                {runtimePaths.isFetching ? (
+                  <Loader2Icon size={15} className="spin" />
+                ) : null}
+              </div>
+
+              <div className="form-grid">
+                {(
+                  [
+                    ["gp_agent_home", "GP Agent 根目录（GP_AGENT_HOME）"],
+                    ["runtime_home", "运行状态目录（AGENT_BASE_HOME）"],
+                    ["workspace_root", "工作区目录"],
+                    ["knowledge_root", "知识库目录"],
+                    ["drafts_root", "申报草稿目录"],
+                    ["projects_root", "项目目录"],
+                    ["logs_root", "启动日志目录"],
+                  ] as const
+                ).map(([field, label]) => (
+                  <label key={field} className="settings-field full">
+                    <span>{label}</span>
+                    <input
+                      value={runtimePathForm[field]}
+                      onChange={(event) => {
+                        setRuntimePathMessage("");
+                        setRuntimePathForm((form) => ({
+                          ...form,
+                          [field]: event.target.value,
+                        }));
+                      }}
+                    />
+                  </label>
+                ))}
+              </div>
+
+              <div className="settings-actions-row">
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={() => saveRuntimePaths.mutate()}
+                  disabled={
+                    saveRuntimePaths.isPending ||
+                    Object.values(runtimePathForm).some(
+                      (value) => !value.trim(),
+                    )
+                  }
+                >
+                  {saveRuntimePaths.isPending ? (
+                    <Loader2Icon size={15} className="spin" />
+                  ) : (
+                    <SaveIcon size={15} />
+                  )}
+                  保存到 .env
+                </button>
+                <button
+                  type="button"
+                  className="ghost-btn"
+                  onClick={() => {
+                    setRuntimePathMessage("");
+                    setRuntimePathForm(
+                      derivedRuntimePathForm(runtimePathForm.gp_agent_home),
+                    );
+                  }}
+                  disabled={!runtimePathForm.gp_agent_home.trim()}
+                >
+                  按根目录生成默认子目录
+                </button>
+                {runtimePathMessage ? (
+                  <span className="settings-inline-message">
+                    {runtimePathMessage}
+                  </span>
+                ) : null}
+              </div>
             </div>
           ) : null}
 

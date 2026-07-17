@@ -428,6 +428,7 @@ def test_apply_prompt_template_includes_government_project_runtime(monkeypatch):
     monkeypatch.setattr(prompt_module, "_build_acp_section", lambda **kwargs: "")
     monkeypatch.setattr(prompt_module, "_get_memory_context", lambda agent_name=None, **kwargs: "")
     monkeypatch.setattr(prompt_module, "get_agent_soul", lambda agent_name=None: "")
+    monkeypatch.setattr(prompt_module, "government_project_workspace_root", lambda: "D:/GP Agent/workspace")
 
     prompt = prompt_module.apply_prompt_template(
         agent_name="government-project-declaration",
@@ -450,6 +451,8 @@ def test_apply_prompt_template_includes_government_project_runtime(monkeypatch):
     assert "【知识库：title | file_path#anchor】" in prompt
     assert "知识库依据" in prompt
     assert "联网依据" in prompt
+    assert "D:/GP Agent/workspace" in prompt
+    assert "C:\\Users\\Administrator" not in prompt
 
 
 def test_apply_prompt_template_omits_government_project_runtime_for_other_agents(monkeypatch):

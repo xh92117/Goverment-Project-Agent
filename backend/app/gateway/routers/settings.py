@@ -8,6 +8,18 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.gateway.env_file import env_path_for_config, read_env_file, write_env_values
 from app.gateway.routers.models import _load_raw_config, _require_admin_user, _write_raw_config
 from deerflow.config.app_config import AppConfig, reload_app_config
+from deerflow.government_project_workspace import (
+    DB_PATH_ENV,
+    DRAFTS_ROOT_ENV,
+    GP_AGENT_HOME_ENV,
+    HOST_BASE_DIR_ENV,
+    KNOWLEDGE_ROOT_ENV,
+    LOG_ROOT_ENV,
+    PROJECTS_ROOT_ENV,
+    RUNTIME_HOME_ENV,
+    WORKSPACE_ROOT_ENV,
+    resolve_government_project_paths,
+)
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -102,6 +114,50 @@ class KnowledgeImageModelSettingsUpdate(BaseModel):
         return value.strip() or None
 
 
+class RuntimePathSettingsResponse(BaseModel):
+    """Configured external storage paths persisted in the project .env file."""
+
+    gp_agent_home: str
+    runtime_home: str
+    workspace_root: str
+    knowledge_root: str
+    drafts_root: str
+    projects_root: str
+    logs_root: str
+    env_path: str
+    restart_required: bool = False
+
+
+class RuntimePathSettingsUpdate(BaseModel):
+    """Editable external storage paths from the settings page."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    gp_agent_home: str = Field(max_length=4096)
+    runtime_home: str = Field(max_length=4096)
+    workspace_root: str = Field(max_length=4096)
+    knowledge_root: str = Field(max_length=4096)
+    drafts_root: str = Field(max_length=4096)
+    projects_root: str = Field(max_length=4096)
+    logs_root: str = Field(max_length=4096)
+
+    @field_validator(
+        "gp_agent_home",
+        "runtime_home",
+        "workspace_root",
+        "knowledge_root",
+        "drafts_root",
+        "projects_root",
+        "logs_root",
+    )
+    @classmethod
+    def _strip_required_path(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("path cannot be empty")
+        return stripped
+
+
 def _env_value(env_values: dict[str, str], key: str, default: str) -> str:
     value = env_values.get(key)
     if value is None:
@@ -153,6 +209,88 @@ def _knowledge_image_model_settings_response(data: dict) -> KnowledgeImageModelS
         selected_model_valid=bool(selected_model and any(model.name == selected_model for model in vision_models)),
         vision_models=vision_models,
     )
+
+
+def _runtime_path_settings_response(
+    config_path: Path,
+    *,
+    restart_required: bool = False,
+) -> RuntimePathSettingsResponse:
+    env_path = env_path_for_config(config_path)
+    values = dict(os.environ)
+    values.update(read_env_file(env_path))
+    try:
+        paths = resolve_government_project_paths(values)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RuntimePathSettingsResponse(
+        gp_agent_home=str(paths.gp_agent_home),
+        runtime_home=str(paths.runtime_home),
+        workspace_root=str(paths.workspace_root),
+        knowledge_root=str(paths.knowledge_root),
+        drafts_root=str(paths.drafts_root),
+        projects_root=str(paths.projects_root),
+        logs_root=str(paths.logs_root),
+        env_path=str(env_path),
+        restart_required=restart_required,
+    )
+
+
+@router.get(
+    "/runtime-paths",
+    response_model=RuntimePathSettingsResponse,
+    summary="Get Runtime Path Settings",
+    description="Read GP Agent storage paths from .env and active defaults.",
+)
+async def get_runtime_path_settings(request: Request) -> RuntimePathSettingsResponse:
+    await _require_admin_user(request)
+    config_path = AppConfig.resolve_config_path()
+    return _runtime_path_settings_response(config_path)
+
+
+@router.put(
+    "/runtime-paths",
+    response_model=RuntimePathSettingsResponse,
+    summary="Update Runtime Path Settings",
+    description="Persist GP Agent storage paths to .env. Restart is required.",
+)
+async def update_runtime_path_settings(
+    request: Request,
+    body: RuntimePathSettingsUpdate,
+) -> RuntimePathSettingsResponse:
+    await _require_admin_user(request)
+    config_path = AppConfig.resolve_config_path()
+    values = {
+        GP_AGENT_HOME_ENV: body.gp_agent_home,
+        RUNTIME_HOME_ENV: body.runtime_home,
+        HOST_BASE_DIR_ENV: body.runtime_home,
+        WORKSPACE_ROOT_ENV: body.workspace_root,
+        KNOWLEDGE_ROOT_ENV: body.knowledge_root,
+        DRAFTS_ROOT_ENV: body.drafts_root,
+        PROJECTS_ROOT_ENV: body.projects_root,
+        LOG_ROOT_ENV: body.logs_root,
+        DB_PATH_ENV: str(Path(body.runtime_home) / "data" / "agent_base.db"),
+    }
+    try:
+        paths = resolve_government_project_paths(values, allow_runtime_inside_source=False)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    write_env_values(
+        env_path_for_config(config_path),
+        {
+            GP_AGENT_HOME_ENV: str(paths.gp_agent_home),
+            RUNTIME_HOME_ENV: str(paths.runtime_home),
+            HOST_BASE_DIR_ENV: str(paths.host_base_dir),
+            WORKSPACE_ROOT_ENV: str(paths.workspace_root),
+            KNOWLEDGE_ROOT_ENV: str(paths.knowledge_root),
+            DRAFTS_ROOT_ENV: str(paths.drafts_root),
+            PROJECTS_ROOT_ENV: str(paths.projects_root),
+            LOG_ROOT_ENV: str(paths.logs_root),
+            DB_PATH_ENV: str(paths.db_path),
+        },
+    )
+    return _runtime_path_settings_response(config_path, restart_required=True)
 
 
 def _settings_response(config_path: Path, env_path: Path) -> PdfParserSettingsResponse:
