@@ -222,6 +222,97 @@ class TestLoadAgentConfig:
         assert cfg.name == "government-project-declaration"
         assert cfg.description == "shared config"
 
+    def test_missing_agent_is_initialized_from_project_template(self, tmp_path):
+        project_dir = tmp_path / "project"
+        runtime_dir = tmp_path / "runtime"
+        templates_dir = project_dir / "configs"
+        templates_dir.mkdir(parents=True)
+        (templates_dir / "government-project-declaration.agent.example.yaml").write_text(
+            "name: government-project-declaration\ndescription: bundled template\n",
+            encoding="utf-8",
+        )
+        (templates_dir / "government-project-declaration.SOUL.example.md").write_text(
+            "Bundled soul",
+            encoding="utf-8",
+        )
+
+        with (
+            patch("deerflow.config.agents_config.get_paths", return_value=_make_paths(runtime_dir)),
+            patch("deerflow.config.agents_config.project_root", return_value=project_dir),
+        ):
+            from deerflow.config.agents_config import load_agent_config, load_agent_soul
+
+            cfg = load_agent_config("government-project-declaration", user_id="new-user")
+            soul = load_agent_soul("government-project-declaration", user_id="new-user")
+
+        target = runtime_dir / "users" / "new-user" / "agents" / "government-project-declaration"
+        assert cfg.description == "bundled template"
+        assert soul == "Bundled soul"
+        assert (target / "config.yaml").is_file()
+        assert (target / "SOUL.md").is_file()
+
+    def test_template_initialization_never_overwrites_user_files(self, tmp_path):
+        project_dir = tmp_path / "project"
+        runtime_dir = tmp_path / "runtime"
+        templates_dir = project_dir / "configs"
+        templates_dir.mkdir(parents=True)
+        (templates_dir / "government-project-declaration.agent.example.yaml").write_text(
+            "name: government-project-declaration\ndescription: bundled template\n",
+            encoding="utf-8",
+        )
+        (templates_dir / "government-project-declaration.SOUL.example.md").write_text(
+            "Bundled soul",
+            encoding="utf-8",
+        )
+        target = runtime_dir / "users" / "default" / "agents" / "government-project-declaration"
+        target.mkdir(parents=True)
+        (target / "config.yaml").write_text(
+            "name: government-project-declaration\ndescription: user customized\n",
+            encoding="utf-8",
+        )
+        (target / "SOUL.md").write_text("User soul", encoding="utf-8")
+
+        with (
+            patch("deerflow.config.agents_config.get_paths", return_value=_make_paths(runtime_dir)),
+            patch("deerflow.config.agents_config.project_root", return_value=project_dir),
+        ):
+            from deerflow.config.agents_config import initialize_agent_templates, load_agent_config, load_agent_soul
+
+            assert initialize_agent_templates(user_id="default") == ["government-project-declaration"]
+            cfg = load_agent_config("government-project-declaration", user_id="default")
+            soul = load_agent_soul("government-project-declaration", user_id="default")
+
+        assert cfg.description == "user customized"
+        assert soul == "User soul"
+
+    def test_template_initialization_preserves_legacy_agent(self, tmp_path):
+        project_dir = tmp_path / "project"
+        runtime_dir = tmp_path / "runtime"
+        templates_dir = project_dir / "configs"
+        templates_dir.mkdir(parents=True)
+        (templates_dir / "government-project-declaration.agent.example.yaml").write_text(
+            "name: government-project-declaration\ndescription: bundled template\n",
+            encoding="utf-8",
+        )
+        legacy_dir = runtime_dir / "agents" / "government-project-declaration"
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "config.yaml").write_text(
+            "name: government-project-declaration\ndescription: legacy customized\n",
+            encoding="utf-8",
+        )
+
+        with (
+            patch("deerflow.config.agents_config.get_paths", return_value=_make_paths(runtime_dir)),
+            patch("deerflow.config.agents_config.project_root", return_value=project_dir),
+        ):
+            from deerflow.config.agents_config import initialize_agent_templates, load_agent_config
+
+            initialize_agent_templates(user_id="default")
+            cfg = load_agent_config("government-project-declaration", user_id="default")
+
+        assert cfg.description == "legacy customized"
+        assert not (runtime_dir / "users" / "default" / "agents" / "government-project-declaration").exists()
+
 
 # ===========================================================================
 # 4. load_agent_soul

@@ -6,7 +6,8 @@
 name: government-project-declaration
 description: Knowledge-base-driven assistant for government research project declaration writing.
 model: null
-workspace_path: "C:\\Users\\Administrator\\GP Agent\\workspace"
+# Leave null to use GOVERNMENT_PROJECT_WORKSPACE_ROOT from the project .env.
+workspace_path: null
 tool_groups:
   - filesystem
 # Built-in knowledge tools are always available to the agent:

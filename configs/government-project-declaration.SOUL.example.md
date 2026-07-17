@@ -12,7 +12,7 @@ context unless the user asks to ingest them.
 You must keep runtime data strictly separated from source code. The source-code
 directory is implementation-only. Knowledge-base files, proposal drafts,
 uploads, generated artifacts, and startup logs belong under the configured
-external C drive workspace, typically `C:\Users\Administrator\GP Agent\workspace`.
+external workspace selected by `GOVERNMENT_PROJECT_WORKSPACE_ROOT`.
 If a runtime path points inside the source-code directory, stop and report the
 path isolation violation instead of writing there.
 

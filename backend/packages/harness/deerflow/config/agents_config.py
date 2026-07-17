@@ -16,12 +16,15 @@ import yaml
 from pydantic import BaseModel
 
 from deerflow.config.paths import get_paths
+from deerflow.config.runtime_paths import project_root
 from deerflow.runtime.user_context import get_effective_user_id
 
 logger = logging.getLogger(__name__)
 
 SOUL_FILENAME = "SOUL.md"
 AGENT_NAME_PATTERN = re.compile(r"^[A-Za-z0-9-]+$")
+AGENT_TEMPLATE_CONFIG_SUFFIX = ".agent.example.yaml"
+AGENT_TEMPLATE_SOUL_SUFFIX = ".SOUL.example.md"
 
 
 def validate_agent_name(name: str | None) -> str | None:
@@ -50,6 +53,84 @@ class AgentConfig(BaseModel):
     skills: list[str] | None = None
 
 
+def _agent_template_files(name: str) -> tuple[Path, Path] | None:
+    """Return the project-shipped template files for ``name``, if present."""
+    templates_dir = project_root() / "configs"
+    config_template = templates_dir / f"{name}{AGENT_TEMPLATE_CONFIG_SUFFIX}"
+    if not config_template.is_file():
+        return None
+    return config_template, templates_dir / f"{name}{AGENT_TEMPLATE_SOUL_SUFFIX}"
+
+
+def _copy_template_if_missing(source: Path, destination: Path) -> bool:
+    """Create ``destination`` exclusively so first-boot setup never overwrites data."""
+    if not source.is_file() or destination.exists():
+        return False
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    created = False
+    try:
+        with destination.open("x", encoding="utf-8", newline="") as output:
+            created = True
+            output.write(source.read_text(encoding="utf-8"))
+    except FileExistsError:
+        # Multiple Gateway workers may initialize the same user concurrently.
+        return False
+    except Exception:
+        if created:
+            destination.unlink(missing_ok=True)
+        raise
+    return True
+
+
+def initialize_agent_from_template(name: str, *, user_id: str | None = None) -> Path | None:
+    """Materialize a project-shipped agent template into the current user layout.
+
+    Existing per-user and legacy shared configurations take precedence and are
+    never changed. A user directory containing only runtime artifacts (for
+    example ``memory.json``) is completed in place.
+    """
+    name = validate_agent_name(name)
+    if name is None:
+        return None
+
+    template_files = _agent_template_files(name)
+    if template_files is None:
+        return None
+
+    paths = get_paths()
+    effective_user = user_id or get_effective_user_id()
+    user_path = paths.user_agent_dir(effective_user, name)
+    legacy_path = paths.agent_dir(name)
+
+    if (legacy_path / "config.yaml").is_file() and not (user_path / "config.yaml").is_file():
+        return legacy_path
+
+    config_template, soul_template = template_files
+    config_created = _copy_template_if_missing(config_template, user_path / "config.yaml")
+    soul_created = _copy_template_if_missing(soul_template, user_path / SOUL_FILENAME)
+    if config_created or soul_created:
+        logger.info("Initialized agent template '%s' for user '%s' at %s", name, effective_user, user_path)
+    return user_path
+
+
+def initialize_agent_templates(*, user_id: str | None = None) -> list[str]:
+    """Initialize every project-shipped agent template for one user."""
+    templates_dir = project_root() / "configs"
+    if not templates_dir.is_dir():
+        return []
+
+    initialized: list[str] = []
+    for config_template in sorted(templates_dir.glob(f"*{AGENT_TEMPLATE_CONFIG_SUFFIX}")):
+        name = config_template.name[: -len(AGENT_TEMPLATE_CONFIG_SUFFIX)]
+        try:
+            if initialize_agent_from_template(name, user_id=user_id) is not None:
+                initialized.append(name)
+        except ValueError:
+            logger.warning("Skipping invalid agent template name: %s", name)
+    return initialized
+
+
 def resolve_agent_dir(name: str, *, user_id: str | None = None) -> Path:
     """Return the on-disk directory for an agent, preferring the per-user layout.
 
@@ -74,6 +155,10 @@ def resolve_agent_dir(name: str, *, user_id: str | None = None) -> Path:
     legacy_path = paths.agent_dir(name)
     if (legacy_path / "config.yaml").exists():
         return legacy_path
+
+    initialized_path = initialize_agent_from_template(name, user_id=effective_user)
+    if initialized_path is not None and (initialized_path / "config.yaml").exists():
+        return initialized_path
 
     if user_path.exists():
         return user_path
