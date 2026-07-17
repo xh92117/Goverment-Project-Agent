@@ -267,6 +267,23 @@ class TestEngineLifecycle:
         assert get_session_factory() is None
 
     @pytest.mark.anyio
+    async def test_sqlite_engine_uses_resolved_env_path_parent(self, tmp_path, monkeypatch):
+        from deerflow.persistence.engine import close_engine, init_engine_from_config
+
+        stale_dir = tmp_path / "old-computer" / "data"
+        runtime_db = tmp_path / "new-computer" / "data" / "agent_base.db"
+        monkeypatch.setenv("AGENT_BASE_DB_PATH", str(runtime_db))
+        config = DatabaseConfig(backend="sqlite", sqlite_dir=str(stale_dir))
+
+        await init_engine_from_config(config)
+
+        try:
+            assert runtime_db.is_file()
+            assert not stale_dir.exists()
+        finally:
+            await close_engine()
+
+    @pytest.mark.anyio
     async def test_postgres_without_asyncpg_gives_actionable_error(self):
         """If asyncpg is not installed, error message tells user what to do."""
         from deerflow.persistence.engine import init_engine

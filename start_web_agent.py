@@ -21,6 +21,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import webbrowser
 from pathlib import Path
 
 from deerflow.government_project_workspace import resolve_government_project_paths
@@ -68,6 +69,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frontend-timeout", type=float, default=45.0, help="Seconds to wait for frontend startup.")
     parser.add_argument("--warmup-timeout", type=float, default=45.0, help="Seconds to wait for each frontend warmup request.")
     parser.add_argument("--skip-warmup", action="store_true", help="Skip frontend route warmup after startup.")
+    parser.add_argument(
+        "--no-open-browser",
+        action="store_true",
+        help="Do not open the web UI in the system default browser after startup.",
+    )
     parser.add_argument(
         "--network-proxy",
         default=os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY") or "",
@@ -214,6 +220,15 @@ def request_page(url: str, *, timeout: float) -> None:
         print(f"[warmup] {url} -> HTTP {response.status}", flush=True)
 
 
+def open_default_browser(url: str) -> bool:
+    """Open ``url`` in the user's system default browser."""
+    try:
+        return bool(webbrowser.open(url, new=2, autoraise=True))
+    except (OSError, webbrowser.Error) as exc:
+        print(f"[warn] Could not open the default browser: {exc}", flush=True)
+        return False
+
+
 def first_project_and_thread(host: str, backend_port: int, timeout: float) -> tuple[str | None, str | None]:
     backend_base = f"http://{host}:{backend_port}"
     projects_payload = request_json(f"{backend_base}/api/projects", timeout=timeout)
@@ -243,7 +258,19 @@ def first_project_and_thread(host: str, backend_port: int, timeout: float) -> tu
 
 def warm_frontend_routes(args: argparse.Namespace) -> None:
     frontend_base = f"http://{args.host}:{args.frontend_port}"
-    urls = [f"{frontend_base}/workspace/projects"]
+    # Next.js dev mode compiles routes on first request. Warm every primary
+    # module before opening the browser so the first navigation does not look
+    # frozen on slower computers. Auth routes are included for first install.
+    urls = [
+        f"{frontend_base}/login",
+        f"{frontend_base}/setup",
+        f"{frontend_base}/workspace/projects",
+        f"{frontend_base}/workspace/knowledge",
+        f"{frontend_base}/workspace/drafts",
+        f"{frontend_base}/workspace/settings",
+        f"{frontend_base}/workspace/chat",
+        f"{frontend_base}/workspace/agents/government-project-declaration/chats/new",
+    ]
     try:
         project_id, thread_id = first_project_and_thread(args.host, args.backend_port, timeout=min(args.warmup_timeout, 10.0))
     except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
@@ -477,9 +504,16 @@ def main() -> int:
         else:
             warm_frontend_routes(args)
         print("", flush=True)
-        print(f"[ready] Web agent: http://{args.host}:{args.frontend_port}", flush=True)
+        web_url = f"http://{args.host}:{args.frontend_port}"
+        print(f"[ready] Web agent: {web_url}", flush=True)
         print(f"[ready] Backend:   http://{args.host}:{args.backend_port}/health", flush=True)
         print(f"[ready] Logs:      {log_dir}", flush=True)
+        if args.no_open_browser:
+            print("[browser] Automatic browser launch skipped.", flush=True)
+        elif open_default_browser(web_url):
+            print("[browser] Opened the web agent in the system default browser.", flush=True)
+        else:
+            print(f"[browser] Open the web agent manually: {web_url}", flush=True)
         print("[info] Press Ctrl+C to stop both services.", flush=True)
 
         while True:

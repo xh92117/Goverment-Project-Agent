@@ -12,7 +12,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from deerflow.config.acp_config import ACPAgentConfig, load_acp_config_from_dict
 from deerflow.config.agents_api_config import AgentsApiConfig, load_agents_api_config_from_dict
 from deerflow.config.checkpointer_config import CheckpointerConfig, load_checkpointer_config_from_dict
-from deerflow.config.database_config import DatabaseConfig, default_sqlite_dir
+from deerflow.config.database_config import (
+    AGENT_BASE_DB_PATH_ENV,
+    LEGACY_DB_PATH_ENV,
+    DatabaseConfig,
+    default_sqlite_dir,
+)
 from deerflow.config.execution_modes_config import ExecutionModesConfig
 from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.config.guardrails_config import GuardrailsConfig, load_guardrails_config_from_dict
@@ -206,6 +211,7 @@ class AppConfig(BaseModel):
 
         config_data = cls.resolve_env_variables(config_data)
         cls._apply_database_defaults(config_data)
+        cls._apply_sqlite_path_override(config_data)
 
         # Load circuit_breaker config if present
         if "circuit_breaker" in config_data:
@@ -267,6 +273,31 @@ class AppConfig(BaseModel):
         for key, value in CONFIG_FILE_DATABASE_DEFAULTS.items():
             database_config.setdefault(key, value)
         database_config.setdefault("sqlite_dir", default_sqlite_dir())
+
+    @classmethod
+    def _apply_sqlite_path_override(cls, config_data: dict[str, Any]) -> None:
+        """Make the runtime SQLite path override authoritative.
+
+        ``start_web_agent.py`` resolves a user-specific database location and
+        exports ``AGENT_BASE_DB_PATH``. Older local ``config.yaml`` files may
+        still contain absolute paths from another computer. Both the ORM
+        engine and the legacy checkpointer section must follow the runtime
+        override so those stale paths are never created or opened.
+        """
+        raw_db_path = os.getenv(AGENT_BASE_DB_PATH_ENV) or os.getenv(LEGACY_DB_PATH_ENV)
+        if not raw_db_path:
+            return
+
+        database_config = config_data.get("database")
+        if not isinstance(database_config, dict) or database_config.get("backend") != "sqlite":
+            return
+
+        db_path = Path(raw_db_path).expanduser().resolve()
+        database_config["sqlite_dir"] = str(db_path.parent)
+
+        checkpointer_config = config_data.get("checkpointer")
+        if isinstance(checkpointer_config, dict) and checkpointer_config.get("type") == "sqlite":
+            checkpointer_config["connection_string"] = str(db_path)
 
     @classmethod
     def _check_config_version(cls, config_data: dict, config_path: Path) -> None:

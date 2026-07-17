@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
@@ -178,7 +179,10 @@ async def init_engine_from_config(config, *, include_auth_models: bool = False) 
         url=config.app_sqlalchemy_url,
         echo=config.echo_sql,
         pool_size=config.pool_size,
-        sqlite_dir=config.sqlite_dir if config.backend == "sqlite" else "",
+        # ``sqlite_path`` includes environment overrides. Using the raw
+        # ``sqlite_dir`` here can try to create a stale absolute path copied
+        # from another computer before SQLAlchemy opens the correct database.
+        sqlite_dir=str(Path(config.sqlite_path).parent) if config.backend == "sqlite" else "",
         include_auth_models=include_auth_models,
     )
 

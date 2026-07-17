@@ -401,10 +401,18 @@ Windows 推荐从项目根目录双击 `start.bat`，或在 PowerShell 中执行
 缺失或依赖清单变化时，会自动安装 `uv`/`pnpm`（如有需要）、同步前后端依赖，再启动服务。
 Node.js 需要预先安装 22 或更高版本，因为批处理无法可靠地替用户选择系统级 Node.js 安装方式。
 
+服务就绪后，启动脚本会先预热主要前端模块，再使用系统默认浏览器打开 Web 页面。新电脑第一次启动时，预热可能需要几十秒；
+这段等待用于完成 Next.js 首次编译，避免进入页面后第一次点击模块时长时间无响应。如需禁止自动打开浏览器，可传入
+`--no-open-browser`。
+
 `start.bat` 支持将参数继续传给启动脚本，例如：
 
 ```powershell
 .\start.bat --network-proxy "http://127.0.0.1:7897"
+```
+
+```powershell
+.\start.bat --no-open-browser
 ```
 
 也可以手动启动前端和后端：

@@ -142,6 +142,42 @@ def test_app_config_defaults_empty_database_to_sqlite(tmp_path, monkeypatch):
     assert config.database.sqlite_dir == str(tmp_path / ".agent-base" / "data")
 
 
+def test_app_config_runtime_db_path_overrides_stale_local_paths(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    extensions_path = tmp_path / "extensions_config.json"
+    _write_extensions_config(extensions_path)
+    stale_root = Path("C:/Users/Administrator/GP Agent/.agent-base/data")
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "database": {"backend": "sqlite", "sqlite_dir": str(stale_root)},
+                "checkpointer": {
+                    "type": "sqlite",
+                    "connection_string": str(stale_root / "checkpoints.db"),
+                },
+                "sandbox": {"use": "deerflow.sandbox.local:LocalSandboxProvider"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime_db = tmp_path / "xh" / "GP Agent" / ".agent-base" / "data" / "agent_base.db"
+    monkeypatch.setenv("DEER_FLOW_EXTENSIONS_CONFIG_PATH", str(extensions_path))
+    monkeypatch.setenv("AGENT_BASE_DB_PATH", str(runtime_db))
+
+    try:
+        config = AppConfig.from_file(str(config_path))
+
+        assert config.database.sqlite_dir == str(runtime_db.parent)
+        assert config.database.sqlite_path == str(runtime_db)
+        assert config.checkpointer is not None
+        assert config.checkpointer.connection_string == str(runtime_db)
+        singleton_config = get_checkpointer_config()
+        assert singleton_config is not None
+        assert singleton_config.connection_string == str(runtime_db)
+    finally:
+        _reset_config_singletons()
+
+
 def test_get_app_config_reloads_when_file_changes(tmp_path, monkeypatch):
     config_path = tmp_path / "config.yaml"
     extensions_path = tmp_path / "extensions_config.json"
