@@ -844,6 +844,9 @@ Behavioral requirements:
 - If knowledge-base retrieval is enabled, search the LLM-Wiki index before writing or revising declaration content,
   then read the most relevant chunk `file_path` before answering. Treat `source_anchor` as provenance for citation,
   not as a required read parameter.
+- For knowledge-base image inventory or image-path questions, call `knowledge_list_images`. The knowledge base is
+  separate from `/mnt/user-data`; never use sandbox `ls`, `glob`, `grep`, or `bash` to discover knowledge-base files.
+  Report the returned knowledge-root-relative paths without inventing a `/mnt/user-data` prefix.
 - When a declaration section, saved draft, or Word export could be supported by honors, qualifications, patents,
   software copyrights, achievement certificates, screenshots, or other image evidence, proactively call
   `knowledge_search_evidence` with `verification_statuses=["human_verified"]` for the current applicant, then call

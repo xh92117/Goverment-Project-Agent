@@ -1,6 +1,7 @@
 from .clarification_tool import ask_clarification_tool
 from .knowledge_tools import (
     knowledge_incremental_update_tool,
+    knowledge_list_images_tool,
     knowledge_read_evidence_tool,
     knowledge_read_file_tool,
     knowledge_search_evidence_tool,
@@ -19,6 +20,7 @@ __all__ = [
     "present_file_tool",
     "ask_clarification_tool",
     "knowledge_incremental_update_tool",
+    "knowledge_list_images_tool",
     "knowledge_read_evidence_tool",
     "knowledge_read_file_tool",
     "knowledge_search_index_tool",

@@ -49,6 +49,7 @@ _MIME_TO_EXTENSION = {
     "image/webp": ".webp",
     "image/tiff": ".tiff",
 }
+_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"})
 _registry_lock = threading.RLock()
 
 
@@ -400,6 +401,67 @@ def search_knowledge_evidence(
             matches.append(evidence)
     matches.sort(key=lambda item: (item.verification_status == "human_verified", item.updated_at), reverse=True)
     return matches[: max(1, min(limit, 100))]
+
+
+def list_knowledge_image_paths(
+    *,
+    folder_path: str = "",
+    include_thumbnails: bool = False,
+    limit: int = 200,
+    user_id: str | None = None,
+) -> tuple[list[str], bool]:
+    """List image files under the current user's knowledge-base root.
+
+    Returned paths are always relative to the knowledge-base root. This keeps
+    host filesystem details private while covering both managed evidence
+    assets (``.assets/.../original.*``) and images extracted beside source
+    documents (for example ``report.pdf.assets/images/*.jpg``).
+
+    Generated evidence thumbnails are omitted by default because they are
+    derivatives of the original image rather than independent knowledge
+    sources.
+    """
+
+    root = knowledge_storage._knowledge_root_path(user_id=user_id).resolve()
+    raw_folder = Path(folder_path)
+    if raw_folder.is_absolute():
+        raise ValueError("folder_path must be relative to the knowledge-base root.")
+
+    if not root.exists() and not folder_path:
+        return [], False
+
+    search_root = (root / raw_folder).resolve()
+    try:
+        search_root.relative_to(root)
+    except ValueError:
+        raise ValueError("Access denied: path traversal detected.") from None
+
+    if not search_root.exists():
+        raise FileNotFoundError(folder_path or ".")
+    if not search_root.is_dir():
+        raise NotADirectoryError(folder_path or ".")
+
+    bounded_limit = max(1, min(limit, 1000))
+    matches: list[str] = []
+    for candidate in search_root.rglob("*"):
+        if candidate.suffix.casefold() not in _IMAGE_EXTENSIONS:
+            continue
+        try:
+            resolved = candidate.resolve()
+            relative = resolved.relative_to(root)
+        except (OSError, ValueError):
+            # Do not follow a symlink or filesystem anomaly outside the
+            # configured knowledge root.
+            continue
+        if not resolved.is_file():
+            continue
+        if not include_thumbnails and relative.name.casefold() == "thumbnail.webp" and _ASSETS_DIR in relative.parts:
+            continue
+        matches.append(relative.as_posix())
+
+    matches.sort(key=lambda value: (value.casefold(), value))
+    truncated = len(matches) > bounded_limit
+    return matches[:bounded_limit], truncated
 
 
 def update_knowledge_evidence(

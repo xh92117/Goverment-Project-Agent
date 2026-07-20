@@ -15,6 +15,7 @@ from deerflow.knowledge import (
     KnowledgeOrganizeResponse,
     build_knowledge_index_from_folder,
     get_knowledge_evidence,
+    list_knowledge_image_paths,
     organize_incoming_files,
     organize_options_from_config,
     read_knowledge_file,
@@ -257,6 +258,49 @@ def knowledge_read_evidence_tool(evidence_id: str, applicant_id: str) -> str:
         payload["usage_rule"] = "Needs human review before factual reuse"
         payload["word_image_export"] = "Unavailable until verification_status is human_verified."
     return _json(payload)
+
+
+@tool("knowledge_list_images", parse_docstring=True)
+def knowledge_list_images_tool(
+    folder_path: str = "",
+    include_thumbnails: bool = False,
+    limit: int = 200,
+) -> str:
+    """List image paths stored in the current user's knowledge base.
+
+    Use this tool for image inventory questions such as "which images are in
+    the knowledge base" or "where are the knowledge-base images stored".
+    Do not use sandbox ls, glob, grep, or bash for this task: the knowledge
+    base is separate from ``/mnt/user-data``. Returned paths are relative to
+    the knowledge-base root and are safe to report directly to the user.
+
+    Args:
+        folder_path: Optional folder relative to the knowledge-base root. Leave empty to scan the entire knowledge base.
+        include_thumbnails: Whether to include generated ``thumbnail.webp`` derivatives. Default is false.
+        limit: Maximum number of image paths to return, from 1 to 1000.
+    """
+
+    paths, truncated = list_knowledge_image_paths(
+        folder_path=folder_path,
+        include_thumbnails=include_thumbnails,
+        limit=limit,
+        user_id=get_effective_user_id(),
+    )
+    root_label = folder_path.strip().replace("\\", "/") or "."
+    if not paths:
+        return f"No image files were found under knowledge-base path: {root_label}"
+
+    if truncated:
+        heading = f"Showing the first {len(paths)} knowledge-base image path(s) under: {root_label}. Narrow folder_path or raise limit for more."
+    else:
+        heading = f"Found {len(paths)} knowledge-base image path(s) under: {root_label}"
+    lines = [
+        heading,
+        "All paths below are relative to the knowledge-base root; do not prepend /mnt/user-data.",
+        "",
+    ]
+    lines.extend(f"{index}. {path}" for index, path in enumerate(paths, start=1))
+    return "\n".join(lines)
 
 
 @tool("knowledge_incremental_update", parse_docstring=True)

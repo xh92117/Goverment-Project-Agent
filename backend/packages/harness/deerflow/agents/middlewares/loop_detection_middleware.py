@@ -52,7 +52,7 @@ from typing import TYPE_CHECKING, override
 from langchain.agents import AgentState
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelCallResult, ModelRequest, ModelResponse
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.runtime import Runtime
 
 if TYPE_CHECKING:
@@ -170,7 +170,58 @@ _HARD_STOP_MSG = "[FORCED STOP] Repeated tool calls exceeded the safety limit. P
 
 _TOOL_FREQ_HARD_STOP_MSG = "[FORCED STOP] Tool {tool_name} called {count} times — exceeded the per-tool safety limit. Producing final answer with results collected so far."
 
+_FAILED_TOOL_WARNING_MSG = (
+    "[LOOP DETECTED] The last {count} tool rounds all failed. Stop retrying file or search tools, explain the "
+    "failure with the available context, and produce your final answer now."
+)
+
+_FAILED_TOOL_HARD_STOP_MSG = (
+    "[FORCED STOP] {count} consecutive tool rounds failed. Producing a final answer instead of retrying tools."
+)
+
 _VISIBLE_HARD_STOP_PREFIX = "本次运行已停止：工具调用次数超过安全上限，未能生成完整最终回答。可以直接发送“继续”，我会基于已检索资料继续生成；也可以点击重新生成，或缩小检索范围后重试。"
+
+
+def _message_text(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                value = block.get("text") or block.get("content")
+                if isinstance(value, str):
+                    parts.append(value)
+        return "".join(parts)
+    return str(content or "")
+
+
+def _is_failed_tool_message(message: ToolMessage) -> bool:
+    if getattr(message, "status", None) == "error":
+        return True
+    content = _message_text(message.content).lstrip().casefold()
+    return content.startswith("error:") or content.startswith("error\n")
+
+
+def _count_consecutive_failed_tool_rounds(messages: list) -> int:
+    """Count all-error tool rounds immediately before the latest AI message."""
+
+    index = len(messages) - 2
+    failed_rounds = 0
+    while index >= 0:
+        results: list[ToolMessage] = []
+        while index >= 0 and isinstance(messages[index], ToolMessage):
+            results.append(messages[index])
+            index -= 1
+        if not results or not all(_is_failed_tool_message(message) for message in results):
+            break
+        if index < 0 or getattr(messages[index], "type", None) != "ai" or not getattr(messages[index], "tool_calls", None):
+            break
+        failed_rounds += 1
+        index -= 1
+    return failed_rounds
 
 
 class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
@@ -324,9 +375,10 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
     def _track_and_check(self, state: AgentState, runtime: Runtime) -> tuple[str | None, bool]:
         """Track tool calls and check for loops.
 
-        Two detection layers:
-          1. **Hash-based** (existing): catches identical tool call sets.
-          2. **Frequency-based** (new): catches the same *tool type* being
+        Three detection layers:
+          1. **Consecutive failures**: catches cross-tool error retries.
+          2. **Hash-based**: catches identical tool call sets.
+          3. **Frequency-based**: catches the same *tool type* being
              called many times with varying arguments (e.g. ``read_file``
              on 40 different files).
 
@@ -346,6 +398,7 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
             return None, False
 
         thread_id = self._get_thread_id(runtime)
+        failed_tool_rounds = _count_consecutive_failed_tool_rounds(messages)
         call_hash = _hash_tool_calls(tool_calls)
 
         with self._lock:
@@ -369,6 +422,32 @@ class LoopDetectionMiddleware(AgentMiddleware[AgentState]):
 
             count = history.count(call_hash)
             tool_names = [tc.get("name", "?") for tc in tool_calls]
+
+            # --- Layer 0: consecutive failed rounds ---
+            # This catches cross-tool retry loops such as ls -> glob -> grep
+            # where every call returns a permission/configuration error but
+            # neither the call hash nor per-tool frequency rises quickly.
+            if failed_tool_rounds >= self.hard_limit:
+                logger.error(
+                    "Consecutive failed tool round hard limit reached — forcing stop",
+                    extra={
+                        "thread_id": thread_id,
+                        "failed_rounds": failed_tool_rounds,
+                        "tools": tool_names,
+                    },
+                )
+                return _FAILED_TOOL_HARD_STOP_MSG.format(count=failed_tool_rounds), True
+
+            if failed_tool_rounds == self.warn_threshold:
+                logger.warning(
+                    "Consecutive failed tool rounds detected — injecting warning",
+                    extra={
+                        "thread_id": thread_id,
+                        "failed_rounds": failed_tool_rounds,
+                        "tools": tool_names,
+                    },
+                )
+                return _FAILED_TOOL_WARNING_MSG.format(count=failed_tool_rounds), False
 
             # --- Layer 1: hash-based (identical call sets) ---
             if count >= self.hard_limit:

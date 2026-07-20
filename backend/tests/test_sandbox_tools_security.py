@@ -166,10 +166,9 @@ def test_validate_local_tool_path_prioritizes_user_data_before_custom_mounts() -
             validate_local_tool_path(f"{VIRTUAL_PATH_PREFIX}/workspace/../../etc/passwd", _THREAD_DATA, read_only=True)
 
 
-def test_validate_local_tool_path_rejects_bare_virtual_root() -> None:
-    """The bare /mnt/user-data root without trailing slash is not a valid sub-path."""
-    with pytest.raises(PermissionError, match="Only paths under"):
-        validate_local_tool_path(VIRTUAL_PATH_PREFIX, _THREAD_DATA)
+def test_validate_local_tool_path_allows_bare_virtual_root() -> None:
+    """The aggregate root is a documented read/list surface."""
+    validate_local_tool_path(VIRTUAL_PATH_PREFIX, _THREAD_DATA, read_only=True)
 
 
 def test_validate_local_tool_path_allows_user_data_paths() -> None:
@@ -252,6 +251,26 @@ def test_resolve_and_validate_user_data_path_resolves_correctly(tmp_path: Path) 
     }
     resolved = _resolve_and_validate_user_data_path("/mnt/user-data/workspace/hello.txt", thread_data)
     assert resolved == str(workspace / "hello.txt")
+
+
+def test_resolve_and_validate_user_data_path_allows_aggregate_root(tmp_path: Path) -> None:
+    user_data = tmp_path / "user-data"
+    thread_data = {
+        "workspace_path": str(user_data / "workspace"),
+        "uploads_path": str(user_data / "uploads"),
+        "outputs_path": str(user_data / "outputs"),
+    }
+
+    resolved = _resolve_and_validate_user_data_path("/mnt/user-data", thread_data)
+
+    assert resolved == str(user_data.resolve())
+
+
+def test_resolve_and_validate_user_data_path_rejects_root_without_all_scoped_directories(tmp_path: Path) -> None:
+    thread_data = {"workspace_path": str(tmp_path / "user-data" / "workspace")}
+
+    with pytest.raises(PermissionError):
+        _resolve_and_validate_user_data_path("/mnt/user-data", thread_data)
 
 
 def test_resolve_and_validate_user_data_path_blocks_traversal(tmp_path: Path) -> None:

@@ -9,6 +9,7 @@ from deerflow.sandbox.security import is_host_bash_allowed
 from deerflow.tools.builtins import (
     ask_clarification_tool,
     knowledge_incremental_update_tool,
+    knowledge_list_images_tool,
     knowledge_read_evidence_tool,
     knowledge_read_file_tool,
     knowledge_search_evidence_tool,
@@ -31,6 +32,7 @@ BUILTIN_TOOLS = [
     knowledge_search_evidence_tool,
     knowledge_read_evidence_tool,
     knowledge_incremental_update_tool,
+    knowledge_list_images_tool,
     proposal_save_markdown_tool,
 ]
 

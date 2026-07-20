@@ -1608,6 +1608,7 @@ def test_available_tools_include_knowledge_tools() -> None:
 
     assert "knowledge_search_index" in tool_names
     assert "knowledge_read_file" in tool_names
+    assert "knowledge_list_images" in tool_names
     assert "knowledge_incremental_update" in tool_names
     assert "proposal_save_markdown" in tool_names
 

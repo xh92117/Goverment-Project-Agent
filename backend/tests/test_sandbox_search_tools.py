@@ -27,6 +27,22 @@ def _make_runtime(tmp_path):
     )
 
 
+def test_ls_tool_allows_aggregate_user_data_root(tmp_path, monkeypatch) -> None:
+    runtime = _make_runtime(tmp_path)
+    monkeypatch.setattr("deerflow.sandbox.tools.ensure_sandbox_initialized", lambda runtime: LocalSandbox(id="local"))
+
+    result = ls_tool.func(
+        runtime=runtime,
+        description="list user data roots",
+        path="/mnt/user-data",
+    )
+
+    assert "Error:" not in result
+    assert "workspace" in result
+    assert "uploads" in result
+    assert "outputs" in result
+
+
 def test_glob_tool_returns_virtual_paths_and_ignores_common_dirs(tmp_path, monkeypatch) -> None:
     runtime = _make_runtime(tmp_path)
     workspace = tmp_path / "workspace"

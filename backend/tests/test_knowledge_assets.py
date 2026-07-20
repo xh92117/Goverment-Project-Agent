@@ -17,10 +17,19 @@ from deerflow.knowledge import extractors as knowledge_extractors
 from deerflow.knowledge import generator as knowledge_generator
 from deerflow.knowledge import organizer as knowledge_organizer
 from deerflow.knowledge import storage as knowledge_storage
-from deerflow.knowledge.assets import get_knowledge_asset, get_knowledge_evidence, search_knowledge_evidence
+from deerflow.knowledge.assets import (
+    get_knowledge_asset,
+    get_knowledge_evidence,
+    list_knowledge_image_paths,
+    search_knowledge_evidence,
+)
 from deerflow.knowledge.evidence_extraction import EvidenceExtractionResult, VisionModelUnavailableError, extract_evidence_from_image
 from deerflow.knowledge.schemas import KnowledgeEvidencePatch, KnowledgeIndexBuildRequest, KnowledgeIndexSearchRequest
-from deerflow.tools.builtins.knowledge_tools import knowledge_read_evidence_tool, knowledge_search_evidence_tool
+from deerflow.tools.builtins.knowledge_tools import (
+    knowledge_list_images_tool,
+    knowledge_read_evidence_tool,
+    knowledge_search_evidence_tool,
+)
 
 
 def test_pillow_is_declared_as_a_harness_base_dependency() -> None:
@@ -87,6 +96,62 @@ def test_image_upload_creates_asset_evidence_and_legacy_index_pointer(tmp_path: 
     assert entry.asset_ids == [asset.asset_id]
     assert entry.applicant_id == "org-001"
     assert entry.file_path == evidence.card_file_path
+
+
+def test_list_knowledge_image_paths_covers_evidence_and_extracted_images(tmp_path: Path) -> None:
+    root = tmp_path / "knowledge_base"
+    original = root / ".assets" / "default" / "aa" / "ast_demo" / "original.png"
+    thumbnail = original.with_name("thumbnail.webp")
+    extracted = root / "历史申报书" / "报告.pdf.assets" / "images" / "figure.jpg"
+    ignored = root / "历史申报书" / "notes.md"
+    for path in (original, thumbnail, extracted, ignored):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"test")
+
+    paths, truncated = list_knowledge_image_paths(user_id="alice")
+
+    assert truncated is False
+    assert paths == [
+        ".assets/default/aa/ast_demo/original.png",
+        "历史申报书/报告.pdf.assets/images/figure.jpg",
+    ]
+
+    paths_with_thumbnails, _ = list_knowledge_image_paths(include_thumbnails=True, user_id="alice")
+    assert ".assets/default/aa/ast_demo/thumbnail.webp" in paths_with_thumbnails
+
+
+def test_list_knowledge_image_paths_supports_folder_limit_and_rejects_escape(tmp_path: Path) -> None:
+    root = tmp_path / "knowledge_base"
+    images = root / "历史申报书" / "demo.pdf.assets" / "images"
+    images.mkdir(parents=True)
+    (images / "b.jpg").write_bytes(b"b")
+    (images / "a.png").write_bytes(b"a")
+
+    paths, truncated = list_knowledge_image_paths(folder_path="历史申报书", limit=1, user_id="alice")
+
+    assert paths == ["历史申报书/demo.pdf.assets/images/a.png"]
+    assert truncated is True
+    with pytest.raises(ValueError, match="path traversal"):
+        list_knowledge_image_paths(folder_path="../outside", user_id="alice")
+
+
+def test_list_knowledge_image_paths_returns_empty_for_new_knowledge_base() -> None:
+    paths, truncated = list_knowledge_image_paths(user_id="alice")
+
+    assert paths == []
+    assert truncated is False
+
+
+def test_knowledge_list_images_tool_returns_relative_paths(tmp_path: Path) -> None:
+    image = tmp_path / "knowledge_base" / "历史申报书" / "report.pdf.assets" / "images" / "figure.png"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"image")
+
+    output = knowledge_list_images_tool.invoke({})
+
+    assert "历史申报书/report.pdf.assets/images/figure.png" in output
+    assert "relative to the knowledge-base root" in output
+    assert "/mnt/user-data/历史申报书" not in output
 
 
 def test_multimodal_extractor_uses_configured_vision_model() -> None:

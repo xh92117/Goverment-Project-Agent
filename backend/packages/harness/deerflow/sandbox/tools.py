@@ -670,7 +670,7 @@ def validate_local_tool_path(path: str, thread_data: ThreadDataState | None, *, 
         return
 
     # User-data paths
-    if path.startswith(f"{VIRTUAL_PATH_PREFIX}/"):
+    if path == VIRTUAL_PATH_PREFIX or path.startswith(f"{VIRTUAL_PATH_PREFIX}/"):
         return
 
     # Custom mount paths — respect read_only config
@@ -700,6 +700,14 @@ def _validate_resolved_user_data_path(resolved: Path, thread_data: ThreadDataSta
 
     if not allowed_roots:
         raise SandboxRuntimeError("No allowed local sandbox directories configured")
+
+    # The aggregate virtual root is safe when every configured user-data
+    # directory is a direct child of the same parent. LocalSandboxProvider
+    # exposes this exact mapping so ``ls /mnt/user-data`` matches the AIO
+    # sandbox contract and lists workspace/uploads/outputs.
+    parents = {root.parent for root in allowed_roots}
+    if len(allowed_roots) == 3 and len(parents) == 1 and resolved == next(iter(parents)):
+        return
 
     for root in allowed_roots:
         try:

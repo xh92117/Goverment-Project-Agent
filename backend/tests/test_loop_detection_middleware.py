@@ -100,6 +100,34 @@ def _make_state(tool_calls=None, content=""):
     return {"messages": [msg]}
 
 
+def _make_state_after_failed_rounds(count: int, *, current_tool: str = "glob") -> dict:
+    messages = [HumanMessage(content="find files")]
+    tool_names = ("ls", "glob", "grep")
+    for index in range(count):
+        name = tool_names[index % len(tool_names)]
+        call_id = f"failed-{index}"
+        messages.append(
+            AIMessage(
+                content="",
+                tool_calls=[{"name": name, "id": call_id, "args": {"path": f"/mnt/path-{index}"}}],
+            )
+        )
+        messages.append(
+            ToolMessage(
+                content=f"Error: Permission denied: /mnt/path-{index}",
+                tool_call_id=call_id,
+                name=name,
+            )
+        )
+    messages.append(
+        AIMessage(
+            content="",
+            tool_calls=[{"name": current_tool, "id": "current-call", "args": {"path": "/mnt/next"}}],
+        )
+    )
+    return {"messages": messages}
+
+
 def _bash_call(cmd="ls"):
     return {"name": "bash", "id": f"call_{cmd}", "args": {"command": cmd}}
 
@@ -207,6 +235,47 @@ class TestLoopDetection:
         for _ in range(2):
             result = mw._apply(_make_state(tool_calls=call), runtime)
             assert result is None
+
+    def test_consecutive_cross_tool_failures_queue_warning(self):
+        mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=5)
+        runtime = _make_runtime()
+
+        result = mw._apply(_make_state_after_failed_rounds(3), runtime)
+
+        assert result is None
+        warnings = mw._pending_warnings[_pending_key()]
+        assert len(warnings) == 1
+        assert "last 3 tool rounds all failed" in warnings[0]
+
+    def test_consecutive_cross_tool_failures_force_stop_before_recursion_limit(self):
+        mw = LoopDetectionMiddleware(warn_threshold=3, hard_limit=5)
+        runtime = _make_runtime()
+
+        result = mw._apply(_make_state_after_failed_rounds(5), runtime)
+
+        assert result is not None
+        message = result["messages"][0]
+        assert message.tool_calls == []
+        assert "5 consecutive tool rounds failed" in LoopDetectionMiddleware._text_content(message.content)
+
+    def test_successful_tool_round_breaks_consecutive_failure_count(self):
+        mw = LoopDetectionMiddleware(warn_threshold=2, hard_limit=3)
+        runtime = _make_runtime()
+        state = _make_state_after_failed_rounds(2)
+        messages = state["messages"]
+        current = messages.pop()
+        messages.extend(
+            [
+                AIMessage(content="", tool_calls=[{"name": "ls", "id": "ok-call", "args": {"path": "/mnt/ok"}}]),
+                ToolMessage(content="file.txt", tool_call_id="ok-call", name="ls"),
+                current,
+            ]
+        )
+
+        result = mw._apply(state, runtime)
+
+        assert result is None
+        assert not mw._pending_warnings.get(_pending_key())
 
     def test_warn_at_threshold_queues_but_does_not_mutate_state(self):
         """At warn threshold, ``after_model`` enqueues but returns None.
