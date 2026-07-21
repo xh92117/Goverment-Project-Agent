@@ -34,6 +34,7 @@ a background task must *not* see the foreground user, wrap it with
 
 from __future__ import annotations
 
+import os
 from contextvars import ContextVar, Token
 from typing import Final, Protocol, runtime_checkable
 
@@ -95,6 +96,32 @@ def require_current_user() -> CurrentUser:
 # ---------------------------------------------------------------------------
 
 DEFAULT_USER_ID: Final[str] = "default"
+STRICT_USER_CONTEXT_ENV: Final[str] = "AGENT_BASE_STRICT_USER_CONTEXT"
+
+
+def strict_user_context_enabled() -> bool:
+    """Return whether missing request identity must fail closed.
+
+    Local-auth deployments are strict by default. Embedded/single-user
+    deployments keep the historical ``default`` bucket unless strict mode is
+    explicitly enabled. An explicit environment value always wins.
+    """
+    explicit = os.getenv(STRICT_USER_CONTEXT_ENV)
+    if explicit is not None:
+        return explicit.strip().lower() in {"1", "true", "yes", "on"}
+    return os.getenv("GATEWAY_ENABLE_LOCAL_AUTH", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _raise_missing_user_context() -> None:
+    raise RuntimeError(
+        "no user context is set; refusing to use the shared default user bucket "
+        "while strict user isolation is enabled"
+    )
 
 
 def get_effective_user_id() -> str:
@@ -105,6 +132,8 @@ def get_effective_user_id() -> str:
     """
     user = _current_user.get()
     if user is None:
+        if strict_user_context_enabled():
+            _raise_missing_user_context()
         return DEFAULT_USER_ID
     return str(user.id)
 
@@ -185,6 +214,8 @@ def resolve_user_id(
     if isinstance(value, _AutoSentinel):
         user = _current_user.get()
         if user is None:
+            if strict_user_context_enabled():
+                _raise_missing_user_context()
             # No auth middleware → no user contextvar. Fall back to the
             # default user bucket so unauthenticated deployments keep
             # working instead of raising RuntimeError.

@@ -69,6 +69,10 @@ class TestUserDir:
     def test_user_dir(self, paths: Paths):
         assert paths.user_dir("alice") == paths.base_dir / "users" / "alice"
 
+    def test_user_projects_and_drafts_dirs(self, paths: Paths):
+        assert paths.user_projects_dir("alice") == paths.base_dir / "users" / "alice" / "projects"
+        assert paths.user_drafts_dir("alice") == paths.base_dir / "users" / "alice" / "proposal_drafts"
+
 
 class TestUserMemoryFile:
     def test_user_memory_file(self, paths: Paths):

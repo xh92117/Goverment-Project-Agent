@@ -18,6 +18,7 @@ KnowledgeLibrary = Literal[
 
 ConfidentialityLevel = Literal["public", "internal", "confidential", "restricted"]
 KnowledgeSearchMode = Literal["hybrid", "keyword", "semantic"]
+KnowledgeScope = Literal["private", "public"]
 KnowledgeVerificationStatus = Literal["needs_review", "human_verified", "rejected"]
 KnowledgeExtractionStatus = Literal["pending", "partial", "completed", "failed"]
 
@@ -160,6 +161,7 @@ class KnowledgeSearchResult(BaseModel):
     score: float
     matched_fields: list[str] = Field(default_factory=list)
     snippet: str = ""
+    scope: KnowledgeScope = "private"
 
 
 class KnowledgeSearchResponse(BaseModel):
@@ -331,6 +333,7 @@ class KnowledgeIndexSearchResult(BaseModel):
     score: float
     matched_fields: list[str] = Field(default_factory=list)
     matched_queries: list[str] = Field(default_factory=list)
+    scope: KnowledgeScope = Field(default="private", description="Knowledge library that produced this hit")
 
 
 class KnowledgeIndexSearchResponse(BaseModel):
@@ -356,6 +359,7 @@ class KnowledgeFileReadResponse(BaseModel):
     anchor: str | None = None
     content: str
     truncated: bool = False
+    scope: KnowledgeScope = "private"
 
 
 class KnowledgeFileSaveRequest(BaseModel):

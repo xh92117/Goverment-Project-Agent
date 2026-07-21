@@ -30,7 +30,7 @@ src/
   app/                    # Next.js App Router pages
     api/                  # API proxy routes
     workspace/            # Government declaration workspace routes
-    (auth)/               # Optional local-auth login/setup routes
+    (auth)/               # Optional local-auth setup/login/register routes
   components/
     ui/                   # Reusable UI primitives
     workspace/            # Workspace-specific components
@@ -74,7 +74,10 @@ src/
   the backend `include_images`, `applicant_id`, and `model_name` fields.
 - `src/core/threads/hooks.ts` owns pre-submit upload state and thread submission.
 - `src/core/api/stream-mode.ts` owns stream mode selection and fallbacks.
-- `src/core/auth/*` is optional and should stay gated by local-auth flags.
+- `src/features/auth/*` owns local-auth API contracts, route policy, page shell,
+  workspace gate, account display, and logout cache clearing. A 404 from
+  `/api/v1/auth/setup-status` means local auth is disabled and must preserve
+  direct workspace access.
 - `src/features/settings/settings-page.tsx` owns runtime storage-path editing.
   It persists only through the admin-only `/api/settings/runtime-paths` API,
   which updates the project `.env`; path changes require a backend/frontend

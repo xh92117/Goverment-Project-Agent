@@ -1,58 +1,116 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
+import { ArrowRightIcon, EyeIcon, EyeOffIcon, LockKeyholeIcon, MailIcon } from "lucide-react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 
 import { loginLocal } from "@/features/auth/api";
+import { AUTH_STATE_QUERY_KEY, AuthGate } from "@/features/auth/auth-gate";
+import { AuthPageShell } from "@/features/auth/auth-page-shell";
+import { authErrorMessage } from "@/features/auth/form-validation";
+import { safeWorkspaceDestination } from "@/features/auth/route-policy";
 import { Button } from "@/shared/ui/button";
-import { Field, Input } from "@/shared/ui/form";
+import { Input } from "@/shared/ui/form";
 
 function LoginForm() {
   const router = useRouter();
   const search = useSearchParams();
-  const [email, setEmail] = useState("admin@govdecl.cn");
+  const queryClient = useQueryClient();
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function submit(event: React.FormEvent) {
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setError(null);
     try {
-      await loginLocal(email, password);
-      router.replace(search.get("next") ?? "/workspace/projects");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      await loginLocal(email.trim(), password);
+      await queryClient.invalidateQueries({ queryKey: AUTH_STATE_QUERY_KEY });
+      router.replace(safeWorkspaceDestination(search.get("next")));
+    } catch (caught) {
+      setError(authErrorMessage(caught));
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <form className="card stack" style={{ width: 380 }} onSubmit={(event) => void submit(event)}>
-      <div>
-        <div className="brand-name">智策登录</div>
-        <p className="muted">使用本地管理员账号进入申报工作台。</p>
-      </div>
-      <Field label="邮箱">
-        <Input value={email} onChange={(event) => setEmail(event.target.value)} />
-      </Field>
-      <Field label="密码">
-        <Input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-      </Field>
-      {error && <div className="error-state">{error}</div>}
-      <Button variant="primary" loading={loading}>登录</Button>
-    </form>
+    <AuthGate surface="login">
+      <AuthPageShell
+        eyebrow="欢迎回来"
+        title="登录工作台"
+        description="使用你的账号继续项目申报工作。"
+      >
+        <form className="auth-form" onSubmit={(event) => void submit(event)}>
+          <label className="auth-field" htmlFor="login-email">
+            <span>邮箱</span>
+            <span className="auth-input-wrap">
+              <MailIcon aria-hidden="true" />
+              <Input
+                id="login-email"
+                name="email"
+                type="email"
+                value={email}
+                autoComplete="email"
+                placeholder="name@example.com"
+                required
+                autoFocus
+                onChange={(event) => setEmail(event.target.value)}
+              />
+            </span>
+          </label>
+
+          <label className="auth-field" htmlFor="login-password">
+            <span>密码</span>
+            <span className="auth-input-wrap">
+              <LockKeyholeIcon aria-hidden="true" />
+              <Input
+                id="login-password"
+                name="password"
+                type={showPassword ? "text" : "password"}
+                value={password}
+                autoComplete="current-password"
+                placeholder="输入登录密码"
+                required
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <button
+                className="auth-password-toggle"
+                type="button"
+                aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                onClick={() => setShowPassword((visible) => !visible)}
+              >
+                {showPassword ? <EyeOffIcon /> : <EyeIcon />}
+              </button>
+            </span>
+          </label>
+
+          {error ? <div className="auth-error" role="alert">{error}</div> : null}
+
+          <Button className="auth-submit" type="submit" variant="primary" loading={loading}>
+            登录
+            {!loading ? <ArrowRightIcon aria-hidden="true" /> : null}
+          </Button>
+        </form>
+
+        <div className="auth-panel-foot">
+          <span>还没有账号？</span>
+          <Link href="/register">创建个人账号</Link>
+        </div>
+      </AuthPageShell>
+    </AuthGate>
   );
 }
 
 export default function LoginPage() {
   return (
-    <div className="app-shell" style={{ display: "grid", placeItems: "center" }}>
-      <Suspense fallback={null}>
-        <LoginForm />
-      </Suspense>
-    </div>
+    <Suspense fallback={<div className="auth-status-screen">正在打开登录页…</div>}>
+      <LoginForm />
+    </Suspense>
   );
 }

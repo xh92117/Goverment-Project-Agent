@@ -5,10 +5,11 @@ import shutil
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.gateway.admin import require_admin_user
 from deerflow.knowledge import (
     KnowledgeDocument,
     KnowledgeDocumentCreate,
@@ -52,13 +53,13 @@ from deerflow.knowledge import (
     list_knowledge_index_entries_page,
     organize_incoming_files,
     organize_options_from_config,
-    read_knowledge_file,
+    read_knowledge_file_combined,
     reextract_knowledge_evidence,
     resolve_asset_file,
     save_knowledge_file,
-    search_knowledge_documents,
+    search_knowledge_documents_combined,
     search_knowledge_evidence,
-    search_knowledge_index_entries,
+    search_knowledge_index_entries_combined,
     update_knowledge_document,
     update_knowledge_evidence,
     update_knowledge_index_entry,
@@ -73,6 +74,18 @@ from deerflow.uploads.manager import (
 )
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
+
+KnowledgeScope = Literal["private", "public"]
+KnowledgeReadScope = Literal["auto", "private", "public"]
+
+
+def _scope_user_id(scope: KnowledgeScope) -> str | None:
+    return None if scope == "public" else get_effective_user_id()
+
+
+async def _authorize_public_write(scope: KnowledgeScope, request: Request) -> None:
+    if scope == "public":
+        await require_admin_user(request, resource="the public knowledge base")
 
 UPLOAD_CHUNK_SIZE = 8192
 KNOWLEDGE_MAX_FILES = 20
@@ -257,7 +270,7 @@ def _delete_knowledge_file_and_indexes(
     root: Path,
     relative_path: str,
     delete_source: bool,
-    user_id: str,
+    user_id: str | None,
 ) -> KnowledgeFileDeleteResponse:
     storage = knowledge_storage.get_knowledge_storage()
     indexes = storage.list_indexes(user_id=user_id)
@@ -373,7 +386,7 @@ def _word_upload_warning(files: list[KnowledgeUploadedFileInfo]) -> str | None:
 def _run_incremental_update(
     request: KnowledgeIncrementalUpdateRequest,
     *,
-    user_id: str,
+    user_id: str | None,
 ) -> KnowledgeIncrementalUpdateResponse:
     organization = None
     if request.organize_incoming:
@@ -408,10 +421,11 @@ def _run_incremental_update(
 async def list_documents(
     library: str | None = Query(default=None),
     doc_type: str | None = Query(default=None),
+    scope: KnowledgeScope = Query(default="private"),
 ) -> list[KnowledgeDocument]:
     """List knowledge-base documents."""
     return list_knowledge_documents(
-        user_id=get_effective_user_id(),
+        user_id=_scope_user_id(scope),
         library=library,
         doc_type=doc_type,
     )
@@ -424,9 +438,14 @@ async def list_documents(
     summary="Create Knowledge Document",
     description="Create a knowledge-base document record with metadata and extracted content.",
 )
-async def create_document(request: KnowledgeDocumentCreate) -> KnowledgeDocument:
+async def create_document(
+    body: KnowledgeDocumentCreate,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeDocument:
     """Create a knowledge-base document."""
-    return create_knowledge_document(request, user_id=get_effective_user_id())
+    await _authorize_public_write(scope, request)
+    return create_knowledge_document(body, user_id=_scope_user_id(scope))
 
 
 @router.get(
@@ -436,10 +455,13 @@ async def create_document(request: KnowledgeDocumentCreate) -> KnowledgeDocument
     summary="Get Knowledge Document",
     description="Get a single knowledge-base document by id.",
 )
-async def get_document(document_id: str) -> KnowledgeDocument:
+async def get_document(
+    document_id: str,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeDocument:
     """Get a knowledge-base document."""
     try:
-        return get_knowledge_document(document_id, user_id=get_effective_user_id())
+        return get_knowledge_document(document_id, user_id=_scope_user_id(scope))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge document '{document_id}' not found.") from exc
 
@@ -451,10 +473,16 @@ async def get_document(document_id: str) -> KnowledgeDocument:
     summary="Update Knowledge Document",
     description="Partially update a knowledge-base document.",
 )
-async def update_document(document_id: str, request: KnowledgeDocumentPatch) -> KnowledgeDocument:
+async def update_document(
+    document_id: str,
+    body: KnowledgeDocumentPatch,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeDocument:
     """Patch a knowledge-base document."""
     try:
-        return update_knowledge_document(document_id, request, user_id=get_effective_user_id())
+        await _authorize_public_write(scope, request)
+        return update_knowledge_document(document_id, body, user_id=_scope_user_id(scope))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge document '{document_id}' not found.") from exc
 
@@ -465,10 +493,15 @@ async def update_document(document_id: str, request: KnowledgeDocumentPatch) -> 
     summary="Delete Knowledge Document",
     description="Delete a knowledge-base document by id.",
 )
-async def delete_document(document_id: str) -> None:
+async def delete_document(
+    document_id: str,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> None:
     """Delete a knowledge-base document."""
     try:
-        delete_knowledge_document(document_id, user_id=get_effective_user_id())
+        await _authorize_public_write(scope, request)
+        delete_knowledge_document(document_id, user_id=_scope_user_id(scope))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge document '{document_id}' not found.") from exc
 
@@ -482,7 +515,7 @@ async def delete_document(document_id: str) -> None:
 )
 async def search_knowledge(request: KnowledgeSearchRequest) -> KnowledgeSearchResponse:
     """Search the current user's knowledge base."""
-    return search_knowledge_documents(request, user_id=get_effective_user_id())
+    return search_knowledge_documents_combined(request, user_id=get_effective_user_id())
 
 
 @router.get(
@@ -492,9 +525,12 @@ async def search_knowledge(request: KnowledgeSearchRequest) -> KnowledgeSearchRe
     summary="List Knowledge Index Entries",
     description="List LLM-Wiki index entries. Agents should search this index before reading source files.",
 )
-async def list_index_entries(category: str | None = Query(default=None)) -> list[KnowledgeIndexEntry]:
+async def list_index_entries(
+    category: str | None = Query(default=None),
+    scope: KnowledgeScope = Query(default="private"),
+) -> list[KnowledgeIndexEntry]:
     """List LLM-Wiki index entries."""
-    return list_knowledge_index_entries(user_id=get_effective_user_id(), category=category)
+    return list_knowledge_index_entries(user_id=_scope_user_id(scope), category=category)
 
 
 @router.post(
@@ -504,9 +540,12 @@ async def list_index_entries(category: str | None = Query(default=None)) -> list
     summary="List Knowledge Index Entries Page",
     description="List LLM-Wiki index entries with pagination and optional local filtering.",
 )
-async def list_index_entries_page(request: KnowledgeIndexListRequest) -> KnowledgeIndexListResponse:
+async def list_index_entries_page(
+    body: KnowledgeIndexListRequest,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeIndexListResponse:
     """List a paged slice of LLM-Wiki index entries."""
-    return list_knowledge_index_entries_page(request, user_id=get_effective_user_id())
+    return list_knowledge_index_entries_page(body, user_id=_scope_user_id(scope))
 
 
 @router.post(
@@ -516,9 +555,14 @@ async def list_index_entries_page(request: KnowledgeIndexListRequest) -> Knowled
     summary="Create Knowledge Index Entry",
     description="Create an LLM-Wiki index entry that points to a source file and optional sections.",
 )
-async def create_index_entry(request: KnowledgeIndexEntryCreate) -> KnowledgeIndexEntry:
+async def create_index_entry(
+    body: KnowledgeIndexEntryCreate,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeIndexEntry:
     """Create an LLM-Wiki index entry."""
-    return create_knowledge_index_entry(request, user_id=get_effective_user_id())
+    await _authorize_public_write(scope, request)
+    return create_knowledge_index_entry(body, user_id=_scope_user_id(scope))
 
 
 @router.get(
@@ -528,10 +572,13 @@ async def create_index_entry(request: KnowledgeIndexEntryCreate) -> KnowledgeInd
     summary="Get Knowledge Index Entry",
     description="Get a single LLM-Wiki index entry.",
 )
-async def get_index_entry(index_id: str) -> KnowledgeIndexEntry:
+async def get_index_entry(
+    index_id: str,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeIndexEntry:
     """Get an LLM-Wiki index entry."""
     try:
-        return get_knowledge_index_entry(index_id, user_id=get_effective_user_id())
+        return get_knowledge_index_entry(index_id, user_id=_scope_user_id(scope))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge index entry '{index_id}' not found.") from exc
 
@@ -543,10 +590,16 @@ async def get_index_entry(index_id: str) -> KnowledgeIndexEntry:
     summary="Update Knowledge Index Entry",
     description="Partially update an LLM-Wiki index entry.",
 )
-async def update_index_entry(index_id: str, request: KnowledgeIndexEntryPatch) -> KnowledgeIndexEntry:
+async def update_index_entry(
+    index_id: str,
+    body: KnowledgeIndexEntryPatch,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeIndexEntry:
     """Patch an LLM-Wiki index entry."""
     try:
-        return update_knowledge_index_entry(index_id, request, user_id=get_effective_user_id())
+        await _authorize_public_write(scope, request)
+        return update_knowledge_index_entry(index_id, body, user_id=_scope_user_id(scope))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge index entry '{index_id}' not found.") from exc
 
@@ -557,10 +610,15 @@ async def update_index_entry(index_id: str, request: KnowledgeIndexEntryPatch) -
     summary="Delete Knowledge Index Entry",
     description="Delete an LLM-Wiki index entry.",
 )
-async def delete_index_entry(index_id: str) -> None:
+async def delete_index_entry(
+    index_id: str,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> None:
     """Delete an LLM-Wiki index entry."""
     try:
-        delete_knowledge_index_entry(index_id, user_id=get_effective_user_id())
+        await _authorize_public_write(scope, request)
+        delete_knowledge_index_entry(index_id, user_id=_scope_user_id(scope))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge index entry '{index_id}' not found.") from exc
 
@@ -574,7 +632,7 @@ async def delete_index_entry(index_id: str) -> None:
 )
 async def search_index(request: KnowledgeIndexSearchRequest) -> KnowledgeIndexSearchResponse:
     """Search LLM-Wiki index entries."""
-    return search_knowledge_index_entries(request, user_id=get_effective_user_id())
+    return search_knowledge_index_entries_combined(request, user_id=get_effective_user_id())
 
 
 @router.post(
@@ -584,9 +642,12 @@ async def search_index(request: KnowledgeIndexSearchRequest) -> KnowledgeIndexSe
     summary="Evaluate Knowledge Index Recall",
     description="Evaluate recall@k and MRR over a small expected-result set.",
 )
-async def evaluate_index_recall(request: KnowledgeRecallEvalRequest) -> KnowledgeRecallEvalResponse:
+async def evaluate_index_recall(
+    body: KnowledgeRecallEvalRequest,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeRecallEvalResponse:
     """Evaluate knowledge index retrieval quality."""
-    return evaluate_knowledge_recall(request, user_id=get_effective_user_id())
+    return evaluate_knowledge_recall(body, user_id=_scope_user_id(scope))
 
 
 @router.post(
@@ -596,12 +657,17 @@ async def evaluate_index_recall(request: KnowledgeRecallEvalRequest) -> Knowledg
     summary="Build Knowledge Index",
     description="Scan a knowledge-base folder and build LLM-Wiki index entries from source files.",
 )
-async def build_index(request: KnowledgeIndexBuildRequest) -> KnowledgeIndexBuildResponse:
+async def build_index(
+    body: KnowledgeIndexBuildRequest,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeIndexBuildResponse:
     """Build LLM-Wiki index entries from a folder."""
     try:
-        return build_knowledge_index_from_folder(request, user_id=get_effective_user_id())
+        await _authorize_public_write(scope, request)
+        return build_knowledge_index_from_folder(body, user_id=_scope_user_id(scope))
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"Knowledge folder '{request.folder_path}' not found.") from exc
+        raise HTTPException(status_code=404, detail=f"Knowledge folder '{body.folder_path}' not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -613,13 +679,18 @@ async def build_index(request: KnowledgeIndexBuildRequest) -> KnowledgeIndexBuil
     summary="Incrementally Update Knowledge Index",
     description="Organize files from the incoming folder and then rebuild the LLM-Wiki index.",
 )
-async def incremental_update(request: KnowledgeIncrementalUpdateRequest) -> KnowledgeIncrementalUpdateResponse:
+async def incremental_update(
+    body: KnowledgeIncrementalUpdateRequest,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeIncrementalUpdateResponse:
     """One-click organization of incoming files and LLM-Wiki index update."""
-    user_id = get_effective_user_id()
+    await _authorize_public_write(scope, request)
+    user_id = _scope_user_id(scope)
     try:
-        return _run_incremental_update(request, user_id=user_id)
+        return _run_incremental_update(body, user_id=user_id)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"Knowledge folder '{request.folder_path}' not found.") from exc
+        raise HTTPException(status_code=404, detail=f"Knowledge folder '{body.folder_path}' not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -632,16 +703,19 @@ async def incremental_update(request: KnowledgeIncrementalUpdateRequest) -> Know
     description="Organize files from incoming and rebuild the LLM-Wiki index as one user action.",
 )
 async def process_incoming_and_build_index(
-    request: KnowledgeIncrementalUpdateRequest,
+    body: KnowledgeIncrementalUpdateRequest,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
 ) -> KnowledgeIncrementalUpdateResponse:
     """Bind incoming-file organization and index building into a single action."""
-    user_id = get_effective_user_id()
+    await _authorize_public_write(scope, request)
+    user_id = _scope_user_id(scope)
     try:
-        request.organize_incoming = True
-        request.replace_existing = True
-        return _run_incremental_update(request, user_id=user_id)
+        body.organize_incoming = True
+        body.replace_existing = True
+        return _run_incremental_update(body, user_id=user_id)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"Knowledge folder '{request.folder_path}' not found.") from exc
+        raise HTTPException(status_code=404, detail=f"Knowledge folder '{body.folder_path}' not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -654,10 +728,12 @@ async def process_incoming_and_build_index(
     description="Upload files into the knowledge-base incoming folder before organization and indexing.",
 )
 async def upload_files(
+    request: Request,
     files: list[UploadFile] = File(...),
     incoming_path: str = Query(default="_incoming"),
     applicant_id: str = Query(default="default"),
     evidence_type: str = Query(default="image_evidence"),
+    scope: KnowledgeScope = Query(default="private"),
 ) -> KnowledgeUploadResponse:
     """Upload source files into the knowledge-base incoming folder."""
     if not files:
@@ -665,7 +741,8 @@ async def upload_files(
     if len(files) > KNOWLEDGE_MAX_FILES:
         raise HTTPException(status_code=413, detail=f"Too many files: maximum is {KNOWLEDGE_MAX_FILES}")
 
-    user_id = get_effective_user_id()
+    await _authorize_public_write(scope, request)
+    user_id = _scope_user_id(scope)
     root = knowledge_storage._knowledge_root_path(user_id=user_id)
     try:
         incoming_dir = _resolve_knowledge_folder(root, incoming_path)
@@ -916,17 +993,22 @@ async def delete_evidence(
     summary="Download Knowledge File",
     description="Download a source file by path relative to the knowledge-base root.",
 )
-async def download_file(file_path: str = Query(..., min_length=1)) -> FileResponse:
+async def download_file(
+    file_path: str = Query(..., min_length=1),
+    scope: KnowledgeReadScope = Query(default="auto"),
+) -> FileResponse:
     """Download a source file from the knowledge base."""
     user_id = get_effective_user_id()
-    root = knowledge_storage._knowledge_root_path(user_id=user_id)
-    try:
-        resolved = _resolve_knowledge_folder(root, file_path)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if not resolved.exists() or not resolved.is_file():
-        raise HTTPException(status_code=404, detail=f"Knowledge file '{file_path}' not found.")
-    return FileResponse(path=resolved, filename=resolved.name, media_type="application/octet-stream")
+    scope_ids = [user_id, None] if scope == "auto" else [_scope_user_id(scope)]
+    for scope_user_id in scope_ids:
+        root = knowledge_storage._knowledge_root_path(user_id=scope_user_id)
+        try:
+            resolved = _resolve_knowledge_folder(root, file_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if resolved.exists() and resolved.is_file():
+            return FileResponse(path=resolved, filename=resolved.name, media_type="application/octet-stream")
+    raise HTTPException(status_code=404, detail=f"Knowledge file '{file_path}' not found.")
 
 
 @router.delete(
@@ -937,11 +1019,14 @@ async def download_file(file_path: str = Query(..., min_length=1)) -> FileRespon
     description=("Delete a source file or generated chunk and remove associated LLM-Wiki index entries. With delete_source=true, all chunks and MinerU caches for the source file are removed too."),
 )
 async def delete_file(
+    request: Request,
     file_path: str = Query(..., min_length=1),
     delete_source: bool = Query(default=True),
+    scope: KnowledgeScope = Query(default="private"),
 ) -> KnowledgeFileDeleteResponse:
     """Delete a knowledge file and synchronize generated chunks and index records."""
-    user_id = get_effective_user_id()
+    await _authorize_public_write(scope, request)
+    user_id = _scope_user_id(scope)
     root = knowledge_storage._knowledge_root_path(user_id=user_id)
     try:
         resolved = _resolve_knowledge_folder(root, file_path)
@@ -968,12 +1053,15 @@ async def delete_file(
     summary="Read Knowledge File",
     description="Read a knowledge-base file or markdown section by path relative to the knowledge-base root.",
 )
-async def read_file(request: KnowledgeFileReadRequest) -> KnowledgeFileReadResponse:
+async def read_file(
+    body: KnowledgeFileReadRequest,
+    scope: KnowledgeReadScope = Query(default="auto"),
+) -> KnowledgeFileReadResponse:
     """Read a source file referenced by the LLM-Wiki index."""
     try:
-        return read_knowledge_file(request, user_id=get_effective_user_id())
+        return read_knowledge_file_combined(body, user_id=get_effective_user_id(), scope=scope)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"Knowledge file '{request.file_path}' not found.") from exc
+        raise HTTPException(status_code=404, detail=f"Knowledge file '{body.file_path}' not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -985,13 +1073,18 @@ async def read_file(request: KnowledgeFileReadRequest) -> KnowledgeFileReadRespo
     summary="Save Knowledge File",
     description="Save an editable markdown or plain-text knowledge-base file by path relative to the knowledge-base root.",
 )
-async def save_file(request: KnowledgeFileSaveRequest) -> KnowledgeFileSaveResponse:
+async def save_file(
+    body: KnowledgeFileSaveRequest,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeFileSaveResponse:
     """Save a markdown/text knowledge file referenced by the LLM-Wiki index."""
     try:
-        return save_knowledge_file(request, user_id=get_effective_user_id())
+        await _authorize_public_write(scope, request)
+        return save_knowledge_file(body, user_id=_scope_user_id(scope))
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"Knowledge file '{request.file_path}' not found.") from exc
+        raise HTTPException(status_code=404, detail=f"Knowledge file '{body.file_path}' not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to save knowledge file '{request.file_path}': {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Failed to save knowledge file '{body.file_path}': {exc}") from exc

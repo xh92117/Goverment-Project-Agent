@@ -42,7 +42,8 @@ Workspace UI
 The frontend is a stateful workspace application. Users create proposal
 assistant threads, consult the knowledge base, manage Markdown proposal drafts,
 inspect artifacts, manage skills and models, and adjust local settings. Optional
-local-auth screens are present but disabled by default.
+local auth provides first-admin setup, login, registration, workspace access
+protection, current-account display, and logout.
 
 ## Source Layout
 
@@ -50,7 +51,10 @@ local-auth screens are present but disabled by default.
   `/workspace/agents/government-project-declaration/chats/[thread_id]`,
   `/workspace/knowledge`, `/workspace/proposal-drafts`, and
   `/workspace/settings`.
-- `app/(auth)/`: Optional login/setup routes gated by local-auth configuration.
+- `app/(auth)/`: Optional `/setup`, `/login`, and `/register` routes. The shared
+  auth gate probes backend setup and session state before rendering them.
+- `features/auth/`: Auth API contracts, safe return-path policy, workspace gate,
+  authentication page shell, validation, current-account display, and logout.
 - `components/ui/`: Reusable UI primitives.
 - `components/ai-elements/`: AI message and composer elements.
 - `components/workspace/`: Workspace-specific components.
@@ -107,6 +111,12 @@ tab reads and writes `/api/settings/runtime-paths`; the backend persists
 `GP_AGENT_HOME` and related derived directory variables in the root `.env`.
 Keep the restart-required notice because live database and workspace handles
 must not be moved while the services are running.
+
+The workspace layout must render `AuthGate` outside `WorkspaceShell` so
+user-scoped project/thread queries cannot start before authentication resolves.
+Treat a 404 from `/api/v1/auth/setup-status` as local auth being disabled and
+allow direct workspace access. On logout, clear the TanStack Query cache before
+navigating to `/login` so cached data cannot cross accounts.
 
 ## Code Style
 

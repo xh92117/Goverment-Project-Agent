@@ -6,11 +6,12 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.gateway.routers import projects
+from deerflow.config.paths import Paths
 from deerflow.knowledge.export_images import ExportEvidenceEnrichment, NoVerifiedImageEvidenceError
 
 
 def _client(tmp_path, monkeypatch) -> TestClient:
-    monkeypatch.setattr(projects, "government_project_projects_root", lambda: tmp_path / "projects")
+    monkeypatch.setattr(projects, "get_paths", lambda: Paths(tmp_path))
     app = FastAPI()
     app.include_router(projects.router)
     return TestClient(app)
@@ -158,6 +159,27 @@ def test_project_owner_isolation(tmp_path, monkeypatch):
     assert fetched.status_code == 404
 
 
+def test_same_project_id_uses_distinct_physical_user_roots(tmp_path, monkeypatch):
+    """Project IDs are tenant-local and must not collide on disk."""
+    current_user = {"id": "owner-a"}
+    monkeypatch.setattr(projects, "get_effective_user_id", lambda: current_user["id"])
+
+    with _client(tmp_path, monkeypatch) as client:
+        first = client.post(
+            "/api/projects",
+            json={"project_id": "shared-name", "name": "A project"},
+        )
+        current_user["id"] = "owner-b"
+        second = client.post(
+            "/api/projects",
+            json={"project_id": "shared-name", "name": "B project"},
+        )
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["root_path"] != second.json()["root_path"]
+
+
 def test_project_file_upload_summary_download_and_delete(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         project = client.post("/api/projects", json={"name": "Upload Project"}).json()
@@ -190,12 +212,13 @@ def test_project_file_upload_summary_download_and_delete(tmp_path, monkeypatch):
 
 
 def test_project_file_write_supports_project_and_thread_sources(tmp_path, monkeypatch):
-    class FakePaths:
+    class FakePaths(Paths):
         def sandbox_outputs_dir(self, thread_id, user_id=None):
             return tmp_path / "thread-outputs" / thread_id
 
-    monkeypatch.setattr(projects, "get_paths", lambda: FakePaths())
-    with _client(tmp_path, monkeypatch) as client:
+    client = _client(tmp_path, monkeypatch)
+    monkeypatch.setattr(projects, "get_paths", lambda: FakePaths(tmp_path))
+    with client:
         project = client.post("/api/projects", json={"name": "Writable Project"}).json()
         project_id = project["project_id"]
         project_write = client.put(
@@ -221,12 +244,13 @@ def test_project_file_write_supports_project_and_thread_sources(tmp_path, monkey
 
 
 def test_project_file_delete_supports_thread_sources(tmp_path, monkeypatch):
-    class FakePaths:
+    class FakePaths(Paths):
         def sandbox_outputs_dir(self, thread_id, user_id=None):
             return tmp_path / "thread-outputs" / thread_id
 
-    monkeypatch.setattr(projects, "get_paths", lambda: FakePaths())
-    with _client(tmp_path, monkeypatch) as client:
+    client = _client(tmp_path, monkeypatch)
+    monkeypatch.setattr(projects, "get_paths", lambda: FakePaths(tmp_path))
+    with client:
         project = client.post("/api/projects", json={"name": "Thread Delete Project"}).json()
         project_id = project["project_id"]
         client.put(
@@ -248,16 +272,17 @@ def test_project_file_delete_supports_thread_sources(tmp_path, monkeypatch):
 
 
 def test_project_file_tree_hides_project_draft_artifact_mirrors(tmp_path, monkeypatch):
-    class FakePaths:
+    class FakePaths(Paths):
         def sandbox_outputs_dir(self, thread_id, user_id=None):
             return tmp_path / "thread-outputs" / thread_id
 
     async def fake_project_threads(project_id, request):
         return [{"thread_id": "thread-1"}]
 
-    monkeypatch.setattr(projects, "get_paths", lambda: FakePaths())
+    client = _client(tmp_path, monkeypatch)
+    monkeypatch.setattr(projects, "get_paths", lambda: FakePaths(tmp_path))
     monkeypatch.setattr(projects, "_project_threads", fake_project_threads)
-    with _client(tmp_path, monkeypatch) as client:
+    with client:
         project = client.post("/api/projects", json={"name": "Dedup Project"}).json()
         project_id = project["project_id"]
         client.put(

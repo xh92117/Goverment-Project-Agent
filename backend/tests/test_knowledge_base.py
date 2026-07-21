@@ -1618,7 +1618,7 @@ def test_proposal_save_markdown_persists_workspace_and_artifact(tmp_path: Path, 
     outputs_root.mkdir(parents=True)
     monkeypatch.setattr(
         "deerflow.tools.builtins.proposal_workspace_tool._proposal_workspace_root",
-        lambda: workspace_root,
+        lambda runtime: workspace_root,
     )
     runtime = SimpleNamespace(state={"thread_data": {"outputs_path": str(outputs_root)}})
 
@@ -1646,7 +1646,7 @@ def test_proposal_save_markdown_uses_one_project_folder_per_thread(
     outputs_root.mkdir(parents=True)
     monkeypatch.setattr(
         "deerflow.tools.builtins.proposal_workspace_tool._proposal_workspace_root",
-        lambda: workspace_root,
+        lambda runtime: workspace_root,
     )
     runtime = SimpleNamespace(
         state={"thread_data": {"outputs_path": str(outputs_root)}},
@@ -1704,8 +1704,8 @@ def test_proposal_save_markdown_uses_project_directory_metadata(
         encoding="utf-8",
     )
     monkeypatch.setattr(
-        "deerflow.tools.builtins.proposal_workspace_tool.government_project_projects_root",
-        lambda: projects_root,
+        "deerflow.tools.builtins.proposal_workspace_tool._project_meta_dir",
+        lambda project_id, runtime: projects_root / project_id,
     )
     runtime = SimpleNamespace(
         state={"thread_data": {"outputs_path": str(outputs_root)}},
@@ -1738,7 +1738,7 @@ def test_proposal_drafts_router_lists_reads_and_saves_markdown(
 
     monkeypatch.setattr(
         proposal_drafts,
-        "government_project_drafts_root",
+        "_drafts_root",
         lambda: drafts_root,
     )
 

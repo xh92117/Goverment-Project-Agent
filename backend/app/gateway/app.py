@@ -31,6 +31,7 @@ from app.gateway.routers import (
 from deerflow.config import app_config as deerflow_app_config
 from deerflow.config.agents_config import initialize_agent_templates
 from deerflow.config.app_config import apply_logging_level
+from deerflow.runtime.tenant_logging import configure_tenant_logging
 from deerflow.runtime.user_context import DEFAULT_USER_ID
 
 AppConfig = deerflow_app_config.AppConfig
@@ -42,6 +43,7 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
+configure_tenant_logging()
 
 logger = logging.getLogger(__name__)
 

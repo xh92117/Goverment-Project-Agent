@@ -17,9 +17,9 @@ from deerflow.knowledge import (
     get_knowledge_evidence,
     organize_incoming_files,
     organize_options_from_config,
-    read_knowledge_file,
+    read_knowledge_file_combined,
     search_knowledge_evidence,
-    search_knowledge_index_entries,
+    search_knowledge_index_entries_combined,
 )
 from deerflow.runtime.user_context import get_effective_user_id
 
@@ -73,7 +73,7 @@ def knowledge_search_index_tool(
         applicant_ids: Optional applicant-owner filter for applicant-specific evidence.
         limit: Maximum number of index results to return.
     """
-    response = search_knowledge_index_entries(
+    response = search_knowledge_index_entries_combined(
         KnowledgeIndexSearchRequest(
             query=query,
             query_variants=query_variants or [],
@@ -107,6 +107,7 @@ def knowledge_search_index_tool(
             [
                 f"[{idx}] {entry.title}",
                 f"file_path: {entry.file_path}",
+                f"knowledge_scope: {result.scope}",
                 f"category: {entry.category}",
             ]
         )
@@ -141,6 +142,7 @@ def knowledge_read_file_tool(
     file_path: str,
     anchor: str | None = None,
     max_chars: int = 12000,
+    scope: str = "auto",
 ) -> str:
     """Read a knowledge-base source file or a specific indexed section.
 
@@ -153,18 +155,21 @@ def knowledge_read_file_tool(
         file_path: Path relative to the knowledge-base root.
         anchor: Optional heading or section anchor to extract.
         max_chars: Maximum characters to return.
+        scope: Source scope from search results: public, private, or auto.
     """
-    response = read_knowledge_file(
+    response = read_knowledge_file_combined(
         KnowledgeFileReadRequest(
             file_path=file_path,
             anchor=anchor,
             max_chars=max(1, min(max_chars, 100000)),
         ),
         user_id=get_effective_user_id(),
+        scope=scope,
     )
     parts = [
         "Knowledge source excerpt.",
         f"file_path: {response.file_path}",
+        f"knowledge_scope: {response.scope}",
     ]
     if response.anchor:
         parts.append(f"anchor: {response.anchor}")

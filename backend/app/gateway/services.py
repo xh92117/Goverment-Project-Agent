@@ -231,6 +231,7 @@ def inject_authenticated_user_context(config: dict[str, Any], request: Request) 
     runtime_context = config.setdefault("context", {})
     if isinstance(runtime_context, dict):
         runtime_context["user_id"] = str(user_id)
+        runtime_context["system_role"] = str(getattr(user, "system_role", "user"))
 
 
 def resolve_agent_factory(assistant_id: str | None):
@@ -288,10 +289,15 @@ def build_run_config(
                 context = dict(context_value)
             else:
                 raise ValueError("request config 'context' must be a mapping or null.")
+            # ``thread_id`` is an authorization boundary selected by the
+            # route, never a client-overridable runtime option. Preserve the
+            # existing context-only shape when the caller did not send it.
+            if "thread_id" in context:
+                context["thread_id"] = thread_id
             config["context"] = context
         else:
-            configurable = {"thread_id": thread_id}
-            configurable.update(request_config.get("configurable", {}))
+            configurable = dict(request_config.get("configurable", {}))
+            configurable["thread_id"] = thread_id
             config["configurable"] = configurable
         for k, v in request_config.items():
             if k not in ("configurable", "context"):
@@ -365,6 +371,9 @@ async def start_run(
             )
 
     try:
+        request_user = getattr(request.state, "user", None)
+        request_user_id = getattr(request_user, "id", None)
+        run_user_id = str(request_user_id) if request_user_id is not None else None
         record = await run_mgr.create_or_reject(
             thread_id,
             body.assistant_id,
@@ -373,6 +382,7 @@ async def start_run(
             kwargs={"input": body.input, "config": body.config},
             multitask_strategy=body.multitask_strategy,
             model_name=model_name,
+            user_id=run_user_id,
         )
     except ConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
