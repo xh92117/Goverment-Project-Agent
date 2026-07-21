@@ -46,6 +46,23 @@ def _make_message(seq: int) -> dict:
     return {"seq": seq, "event_type": "on_chat_model_stream", "category": "message", "content": f"msg-{seq}"}
 
 
+def test_stateless_wait_rejects_unowned_supplied_thread(monkeypatch):
+    """A stateless run may only reuse a thread owned by the caller."""
+    app = make_authed_test_app(owner_check_passes=False)
+    app.include_router(runs.router)
+    start_run = AsyncMock()
+    monkeypatch.setattr(runs, "start_run", start_run)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/runs/wait",
+            json={"config": {"configurable": {"thread_id": "victim-thread"}}},
+        )
+
+    assert response.status_code == 404
+    start_run.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------

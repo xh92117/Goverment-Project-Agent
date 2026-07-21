@@ -131,6 +131,27 @@ async def test_create_and_get(manager: RunManager):
 
 
 @pytest.mark.anyio
+async def test_in_memory_runs_are_filtered_by_user_and_thread(manager: RunManager):
+    """Process-local records must enforce the same tenant filter as the DB."""
+    alice = await manager.create("same-thread", user_id="alice")
+    bob = await manager.create("same-thread", user_id="bob")
+
+    assert await manager.get(alice.run_id, user_id="bob") is None
+    assert await manager.get(alice.run_id, user_id="alice") is alice
+    assert await manager.list_by_thread("same-thread", user_id="alice") == [alice]
+    assert await manager.list_by_thread("same-thread", user_id="bob") == [bob]
+
+
+@pytest.mark.anyio
+async def test_inflight_conflicts_are_scoped_to_user(manager: RunManager):
+    await manager.create_or_reject("same-thread", user_id="alice")
+
+    bob = await manager.create_or_reject("same-thread", user_id="bob")
+
+    assert bob.user_id == "bob"
+
+
+@pytest.mark.anyio
 async def test_status_transitions(manager: RunManager):
     """Status should transition pending -> running -> success."""
     record = await manager.create("thread-1")
@@ -332,8 +353,17 @@ async def test_cancel_not_inflight(manager: RunManager):
 
 
 @pytest.mark.anyio
-async def test_list_by_thread(manager: RunManager):
+async def test_list_by_thread(manager: RunManager, monkeypatch: pytest.MonkeyPatch):
     """Same thread should return multiple runs."""
+    timestamps = iter(
+        [
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-01T00:00:01+00:00",
+            "2026-01-01T00:00:02+00:00",
+        ]
+    )
+    monkeypatch.setattr("deerflow.runtime.runs.manager._now_iso", lambda: next(timestamps))
+
     r1 = await manager.create("thread-1")
     r2 = await manager.create("thread-1")
     await manager.create("thread-2")

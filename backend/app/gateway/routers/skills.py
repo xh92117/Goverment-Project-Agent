@@ -4,9 +4,10 @@ import tempfile
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 
+from app.gateway.admin import require_admin_user
 from app.gateway.deps import get_config
 from app.gateway.path_utils import resolve_thread_virtual_path
 from deerflow.agents.lead_agent.prompt import refresh_skills_system_prompt_cache_async
@@ -120,9 +121,14 @@ async def list_skills(config: AppConfig = Depends(get_config)) -> SkillsListResp
     summary="Install Skill",
     description="Install a skill from a .skill file (ZIP archive) located in the thread's user-data directory.",
 )
-async def install_skill(request: SkillInstallRequest, config: AppConfig = Depends(get_config)) -> SkillInstallResponse:
+async def install_skill(
+    body: SkillInstallRequest,
+    request: Request,
+    config: AppConfig = Depends(get_config),
+) -> SkillInstallResponse:
+    await require_admin_user(request, resource="shared skills")
     try:
-        skill_file_path = resolve_thread_virtual_path(request.thread_id, request.path)
+        skill_file_path = resolve_thread_virtual_path(body.thread_id, body.path)
         result = await get_or_new_skill_storage(app_config=config).ainstall_skill_from_archive(skill_file_path)
         await refresh_skills_system_prompt_cache_async()
         return SkillInstallResponse(**result)
@@ -145,7 +151,12 @@ async def install_skill(request: SkillInstallRequest, config: AppConfig = Depend
     summary="Upload and Install Skill",
     description="Upload a SKILL.md, .skill archive, or .zip archive and install it into the skills directory.",
 )
-async def upload_skill(file: UploadFile = File(...), config: AppConfig = Depends(get_config)) -> SkillInstallResponse:
+async def upload_skill(
+    request: Request,
+    file: UploadFile = File(...),
+    config: AppConfig = Depends(get_config),
+) -> SkillInstallResponse:
+    await require_admin_user(request, resource="shared skills")
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file uploaded")
 
@@ -236,17 +247,23 @@ async def get_custom_skill(skill_name: str, config: AppConfig = Depends(get_conf
 
 
 @router.put("/skills/custom/{skill_name}", response_model=CustomSkillContentResponse, summary="Edit Custom Skill")
-async def update_custom_skill(skill_name: str, request: CustomSkillUpdateRequest, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
+async def update_custom_skill(
+    skill_name: str,
+    body: CustomSkillUpdateRequest,
+    request: Request,
+    config: AppConfig = Depends(get_config),
+) -> CustomSkillContentResponse:
+    await require_admin_user(request, resource="shared skills")
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         storage = get_or_new_skill_storage(app_config=config)
         storage.ensure_custom_skill_is_editable(skill_name)
-        storage.validate_skill_markdown_content(skill_name, request.content)
-        scan = await scan_skill_content(request.content, executable=False, location=f"{skill_name}/{SKILL_MD_FILE}", app_config=config)
+        storage.validate_skill_markdown_content(skill_name, body.content)
+        scan = await scan_skill_content(body.content, executable=False, location=f"{skill_name}/{SKILL_MD_FILE}", app_config=config)
         if scan.decision == "block":
             raise HTTPException(status_code=400, detail=f"Security scan blocked the edit: {scan.reason}")
         prev_content = storage.read_custom_skill(skill_name)
-        storage.write_custom_skill(skill_name, SKILL_MD_FILE, request.content)
+        storage.write_custom_skill(skill_name, SKILL_MD_FILE, body.content)
         storage.append_history(
             skill_name,
             {
@@ -255,7 +272,7 @@ async def update_custom_skill(skill_name: str, request: CustomSkillUpdateRequest
                 "thread_id": None,
                 "file_path": SKILL_MD_FILE,
                 "prev_content": prev_content,
-                "new_content": request.content,
+                "new_content": body.content,
                 "scanner": {"decision": scan.decision, "reason": scan.reason},
             },
         )
@@ -273,7 +290,12 @@ async def update_custom_skill(skill_name: str, request: CustomSkillUpdateRequest
 
 
 @router.delete("/skills/custom/{skill_name}", summary="Delete Custom Skill")
-async def delete_custom_skill(skill_name: str, config: AppConfig = Depends(get_config)) -> dict[str, bool]:
+async def delete_custom_skill(
+    skill_name: str,
+    request: Request,
+    config: AppConfig = Depends(get_config),
+) -> dict[str, bool]:
+    await require_admin_user(request, resource="shared skills")
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         storage = get_or_new_skill_storage(app_config=config)
@@ -316,7 +338,13 @@ async def get_custom_skill_history(skill_name: str, config: AppConfig = Depends(
 
 
 @router.post("/skills/custom/{skill_name}/rollback", response_model=CustomSkillContentResponse, summary="Rollback Custom Skill")
-async def rollback_custom_skill(skill_name: str, request: SkillRollbackRequest, config: AppConfig = Depends(get_config)) -> CustomSkillContentResponse:
+async def rollback_custom_skill(
+    skill_name: str,
+    body: SkillRollbackRequest,
+    request: Request,
+    config: AppConfig = Depends(get_config),
+) -> CustomSkillContentResponse:
+    await require_admin_user(request, resource="shared skills")
     try:
         storage = get_or_new_skill_storage(app_config=config)
         if not storage.custom_skill_exists(skill_name) and not storage.get_skill_history_file(skill_name).exists():
@@ -324,7 +352,7 @@ async def rollback_custom_skill(skill_name: str, request: SkillRollbackRequest, 
         history = storage.read_history(skill_name)
         if not history:
             raise HTTPException(status_code=400, detail=f"Custom skill '{skill_name}' has no history")
-        record = history[request.history_index]
+        record = history[body.history_index]
         target_content = record.get("prev_content")
         if target_content is None:
             raise HTTPException(status_code=400, detail="Selected history entry has no previous content to roll back to")
@@ -391,7 +419,13 @@ async def get_skill(skill_name: str, config: AppConfig = Depends(get_config)) ->
     summary="Update Skill",
     description="Update a skill's enabled status by modifying the extensions_config.json file.",
 )
-async def update_skill(skill_name: str, request: SkillUpdateRequest, config: AppConfig = Depends(get_config)) -> SkillResponse:
+async def update_skill(
+    skill_name: str,
+    body: SkillUpdateRequest,
+    request: Request,
+    config: AppConfig = Depends(get_config),
+) -> SkillResponse:
+    await require_admin_user(request, resource="shared skills")
     try:
         skill_name = skill_name.replace("\r\n", "").replace("\n", "")
         skills = get_or_new_skill_storage(app_config=config).load_skills(enabled_only=False)
@@ -406,7 +440,7 @@ async def update_skill(skill_name: str, request: SkillUpdateRequest, config: App
             logger.info(f"No existing extensions config found. Creating new config at: {config_path}")
 
         extensions_config = get_extensions_config()
-        extensions_config.skills[skill_name] = SkillStateConfig(enabled=request.enabled)
+        extensions_config.skills[skill_name] = SkillStateConfig(enabled=body.enabled)
 
         config_data = {
             "mcpServers": {name: server.model_dump() for name, server in extensions_config.mcp_servers.items()},
@@ -426,7 +460,7 @@ async def update_skill(skill_name: str, request: SkillUpdateRequest, config: App
         if updated_skill is None:
             raise HTTPException(status_code=500, detail=f"Failed to reload skill '{skill_name}' after update")
 
-        logger.info(f"Skill '{skill_name}' enabled status updated to {request.enabled}")
+        logger.info(f"Skill '{skill_name}' enabled status updated to {body.enabled}")
         return _skill_to_response(updated_skill)
 
     except HTTPException:

@@ -22,6 +22,24 @@ export class ApiError extends Error {
   }
 }
 
+function responseMessage(body: unknown, status: number) {
+  if (typeof body === "object" && body) {
+    const payload = body as { detail?: unknown; message?: unknown };
+    if (typeof payload.detail === "string" && payload.detail) return payload.detail;
+    if (typeof payload.detail === "object" && payload.detail) {
+      const nested = payload.detail as { message?: unknown };
+      if (typeof nested.message === "string" && nested.message) return nested.message;
+    }
+    if (typeof payload.message === "string" && payload.message) return payload.message;
+  }
+  return `请求失败：HTTP ${status}`;
+}
+
+export async function apiErrorFromResponse(response: Response) {
+  const detail = await response.json().catch(() => undefined);
+  return new ApiError(responseMessage(detail, response.status), response.status, detail);
+}
+
 export function apiUrl(path: string) {
   const clean = path.startsWith("/") ? path : `/${path}`;
   return `${backendBaseUrl()}${clean}`;
@@ -49,12 +67,7 @@ export async function apiJson<T>(path: string, init: RequestInit = {}): Promise<
   }
   const response = await apiFetch(path, { ...init, headers });
   if (!response.ok) {
-    const detail = await response.json().catch(() => undefined);
-    const message =
-      typeof detail === "object" && detail && "detail" in detail
-        ? String((detail as { detail: unknown }).detail)
-        : `请求失败：HTTP ${response.status}`;
-    throw new ApiError(message, response.status, detail);
+    throw await apiErrorFromResponse(response);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;

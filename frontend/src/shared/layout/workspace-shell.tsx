@@ -21,6 +21,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 
+import { WorkspaceAccount } from "@/features/auth/workspace-account";
 import { createThread, deleteThread, patchThread, searchThreads } from "@/features/chat/api";
 import type { ThreadRecord } from "@/features/chat/api";
 import { UNTITLED_DIRECT_THREAD_TITLE, UNTITLED_PROJECT_THREAD_TITLE } from "@/features/chat/thread-title";
@@ -623,6 +624,7 @@ export function WorkspaceShell({ children }: Readonly<{ children: React.ReactNod
         </div>
 
         <div className="sl-foot">
+          <WorkspaceAccount />
           <Link className={`foot-btn${pathname.startsWith("/workspace/knowledge") ? " active" : ""}`} href="/workspace/knowledge">
             <BookOpenIcon />
             知识库

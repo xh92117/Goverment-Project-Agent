@@ -38,6 +38,31 @@ def _extract_thread_id(runtime: Runtime | None) -> str:
         return "default"
 
 
+def _extract_session_scope(runtime: Runtime | None) -> str:
+    """Build a tenant-aware MCP session key while preserving legacy callers."""
+    thread_id = _extract_thread_id(runtime)
+    user_id: Any = None
+    if runtime is not None:
+        context = runtime.context if isinstance(runtime.context, dict) else {}
+        user_id = context.get("user_id")
+        if user_id is None:
+            config = runtime.config if isinstance(runtime.config, dict) else {}
+            config_context = config.get("context", {})
+            if isinstance(config_context, dict):
+                user_id = config_context.get("user_id")
+    if user_id is None:
+        try:
+            config_context = get_config().get("context", {})
+            if isinstance(config_context, dict):
+                user_id = config_context.get("user_id")
+        except RuntimeError:
+            pass
+    if user_id is None:
+        return thread_id
+    normalized_user_id = str(user_id)
+    return f"user:{len(normalized_user_id)}:{normalized_user_id}:thread:{thread_id}"
+
+
 def _convert_call_tool_result(call_tool_result: Any) -> Any:
     """Convert an MCP CallToolResult to the LangChain ``content_and_artifact`` format.
 
@@ -113,7 +138,7 @@ def _make_session_pool_tool(
     """Wrap an MCP tool so it reuses a persistent session from the pool.
 
     Replaces the per-call session creation with pool-managed sessions scoped
-    by ``(server_name, thread_id)``.  This ensures stateful MCP servers (e.g.
+    by ``(server_name, user_id, thread_id)``. This ensures stateful MCP servers (e.g.
     Playwright) keep their state across tool calls within the same thread.
 
     The configured ``tool_interceptors`` (OAuth, custom) are preserved and
@@ -131,8 +156,8 @@ def _make_session_pool_tool(
         runtime: Runtime | None = None,
         **arguments: Any,
     ) -> Any:
-        thread_id = _extract_thread_id(runtime)
-        session = await pool.get_session(server_name, thread_id, connection)
+        session_scope = _extract_session_scope(runtime)
+        session = await pool.get_session(server_name, session_scope, connection)
 
         if tool_interceptors:
             from langchain_mcp_adapters.interceptors import MCPToolCallRequest

@@ -8,7 +8,9 @@ The script is idempotent — re-running it after a successful migration is a no-
 
 import argparse
 import logging
+import os
 import shutil
+from pathlib import Path
 
 from deerflow.config.paths import Paths, get_paths
 
@@ -19,6 +21,7 @@ def migrate_thread_dirs(
     paths: Paths,
     thread_owner_map: dict[str, str],
     *,
+    default_user_id: str = "default",
     dry_run: bool = False,
 ) -> list[dict]:
     """Move legacy thread directories into per-user layout.
@@ -41,8 +44,8 @@ def migrate_thread_dirs(
         if not thread_dir.is_dir():
             continue
         thread_id = thread_dir.name
-        user_id = thread_owner_map.get(thread_id, "default")
-        dest = paths.base_dir / "users" / user_id / "threads" / thread_id
+        user_id = thread_owner_map.get(thread_id, default_user_id)
+        dest = paths.thread_dir(thread_id, user_id=user_id)
 
         entry = {"thread_id": thread_id, "user_id": user_id, "action": ""}
 
@@ -66,6 +69,48 @@ def migrate_thread_dirs(
     if not dry_run and legacy_threads.exists() and not any(legacy_threads.iterdir()):
         legacy_threads.rmdir()
 
+    return report
+
+
+def migrate_legacy_collection(
+    paths: Paths,
+    *,
+    source_root,
+    destination_root,
+    category: str,
+    dry_run: bool = False,
+) -> list[dict]:
+    """Move the direct children of one legacy workspace root safely.
+
+    Projects and proposal drafts are directory collections rather than one
+    atomic file. Existing destination entries win; legacy conflicts are kept
+    under ``migration-conflicts/<category>/`` for manual review.
+    """
+    from pathlib import Path
+
+    source = Path(source_root).resolve()
+    destination = Path(destination_root).resolve()
+    if source == destination or not source.exists():
+        return []
+
+    report: list[dict] = []
+    for item in sorted(source.iterdir(), key=lambda path: path.name):
+        dest = destination / item.name
+        if dest.exists():
+            conflict = paths.base_dir / "migration-conflicts" / category / item.name
+            action = f"conflict -> {conflict}"
+            if not dry_run:
+                conflict.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(item), str(conflict))
+        else:
+            action = f"moved -> {dest}"
+            if not dry_run:
+                destination.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(item), str(dest))
+        report.append({"name": item.name, "category": category, "action": action})
+
+    if not dry_run and source.exists() and not any(source.iterdir()):
+        source.rmdir()
     return report
 
 
@@ -162,14 +207,24 @@ def migrate_memory(
         shutil.move(str(legacy_mem), str(dest))
 
 
-def _build_owner_map_from_db(paths: Paths) -> dict[str, str]:
+def _build_owner_map_from_db(paths: Paths, database_path: str | Path | None = None) -> dict[str, str]:
     """Query threads_meta table for thread_id -> user_id mapping.
 
     Uses raw sqlite3 to avoid async dependencies.
     """
     import sqlite3
 
-    db_path = paths.base_dir / "deer-flow.db"
+    configured_env = os.getenv("AGENT_BASE_DB_PATH") or os.getenv("DEER_FLOW_DB_PATH")
+    candidates = [
+        Path(database_path).expanduser().resolve() if database_path else None,
+        paths.base_dir / "data" / "agent_base.db",
+        paths.base_dir / "data" / "deerflow.db",
+        paths.base_dir / "agent_base.db",
+        paths.base_dir / "deerflow.db",
+        paths.base_dir / "deer-flow.db",
+        Path(configured_env).expanduser().resolve() if configured_env else None,
+    ]
+    db_path = next((candidate for candidate in candidates if candidate is not None and candidate.exists()), candidates[1])
     if not db_path.exists():
         logger.info("No database found at %s — using empty owner map.", db_path)
         return {}
@@ -194,6 +249,11 @@ def main() -> None:
         metavar="USER_ID",
         help=("User ID to claim un-owned legacy data (global memory.json and legacy custom agents). Defaults to 'default'. In multi-user installs, set this to the operator account that should inherit those legacy artifacts."),
     )
+    parser.add_argument(
+        "--db-path",
+        default=None,
+        help="Optional SQLite agent_base.db path used to resolve legacy thread owners.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -203,12 +263,37 @@ def main() -> None:
     logger.info("Dry run: %s", args.dry_run)
     logger.info("Claiming un-owned legacy data for user_id=%s", args.user_id)
 
-    owner_map = _build_owner_map_from_db(paths)
+    owner_map = _build_owner_map_from_db(paths, database_path=args.db_path)
     logger.info("Found %d thread ownership records in DB", len(owner_map))
 
-    report = migrate_thread_dirs(paths, owner_map, dry_run=args.dry_run)
+    report = migrate_thread_dirs(
+        paths,
+        owner_map,
+        default_user_id=args.user_id,
+        dry_run=args.dry_run,
+    )
     migrate_memory(paths, user_id=args.user_id, dry_run=args.dry_run)
     agent_report = migrate_agents(paths, user_id=args.user_id, dry_run=args.dry_run)
+
+    from deerflow.government_project_workspace import (
+        government_project_drafts_root,
+        government_project_projects_root,
+    )
+
+    project_report = migrate_legacy_collection(
+        paths,
+        source_root=government_project_projects_root(),
+        destination_root=paths.user_projects_dir(args.user_id),
+        category="projects",
+        dry_run=args.dry_run,
+    )
+    draft_report = migrate_legacy_collection(
+        paths,
+        source_root=government_project_drafts_root(),
+        destination_root=paths.user_drafts_dir(args.user_id),
+        category="proposal-drafts",
+        dry_run=args.dry_run,
+    )
 
     if report:
         logger.info("Thread migration report:")
@@ -224,9 +309,19 @@ def main() -> None:
     else:
         logger.info("No agents to migrate.")
 
-    unowned = [e for e in report if e["user_id"] == "default"]
+    logger.info(
+        "Legacy workspace migration: %d project item(s), %d proposal-draft item(s)",
+        len(project_report),
+        len(draft_report),
+    )
+
+    unowned = [e for e in report if e["thread_id"] not in owner_map]
     if unowned:
-        logger.warning("%d thread(s) had no owner and were assigned to 'default':", len(unowned))
+        logger.warning(
+            "%d thread(s) had no owner and were assigned to '%s':",
+            len(unowned),
+            args.user_id,
+        )
         for e in unowned:
             logger.warning("  %s", e["thread_id"])
 

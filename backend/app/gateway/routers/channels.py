@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+
+from app.gateway.admin import require_admin_user
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +25,9 @@ class ChannelRestartResponse(BaseModel):
 
 
 @router.get("/", response_model=ChannelStatusResponse)
-async def get_channels_status() -> ChannelStatusResponse:
+async def get_channels_status(request: Request) -> ChannelStatusResponse:
     """Get the status of all IM channels."""
+    await require_admin_user(request, resource="shared channel services")
     from app.channels.service import get_channel_service
 
     service = get_channel_service()
@@ -35,8 +38,9 @@ async def get_channels_status() -> ChannelStatusResponse:
 
 
 @router.post("/{name}/restart", response_model=ChannelRestartResponse)
-async def restart_channel(name: str) -> ChannelRestartResponse:
+async def restart_channel(name: str, request: Request) -> ChannelRestartResponse:
     """Restart a specific IM channel."""
+    await require_admin_user(request, resource="shared channel services")
     from app.channels.service import get_channel_service
 
     service = get_channel_service()

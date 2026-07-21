@@ -216,14 +216,30 @@ class LocalSandboxProvider(SandboxProvider):
             ),
         ]
 
+    @staticmethod
+    def _thread_scope_key(thread_id: str) -> str:
+        """Return the cache/ID key for a thread in the current deployment mode.
+
+        Authenticated deployments include the request user so identical public
+        thread IDs can never reuse another tenant's in-process sandbox. The
+        legacy key is retained for explicit single-user deployments.
+        """
+        from deerflow.runtime.user_context import get_effective_user_id, strict_user_context_enabled
+
+        if not strict_user_context_enabled():
+            return thread_id
+        user_id = get_effective_user_id()
+        return f"user:{len(user_id)}:{user_id}:thread:{thread_id}"
+
     def acquire(self, thread_id: str | None = None) -> str:
         """Return a sandbox id scoped to *thread_id* (or the generic singleton).
 
         - ``thread_id=None`` keeps the legacy singleton with id ``"local"`` for
           callers that have no thread context (e.g. legacy tests, scripts).
-        - ``thread_id="abc"`` yields a per-thread ``LocalSandbox`` with id
-          ``"local:abc"`` whose ``path_mappings`` resolve ``/mnt/user-data/...``
-          to that thread's host directories.
+        - ``thread_id="abc"`` yields a per-thread ``LocalSandbox`` whose
+          ``path_mappings`` resolve ``/mnt/user-data/...`` to that thread's
+          host directories. Authenticated deployments include the tenant in
+          both the sandbox ID and cache key.
 
         Thread-safe under concurrent invocation: the cache check + insert is
         guarded by ``self._lock`` so two callers racing on the same
@@ -238,13 +254,15 @@ class LocalSandboxProvider(SandboxProvider):
                     _singleton = self._generic_sandbox
                 return self._generic_sandbox.id
 
+        scope_key = self._thread_scope_key(thread_id)
+
         # Fast path under lock.
         with self._lock:
-            cached = self._thread_sandboxes.get(thread_id)
+            cached = self._thread_sandboxes.get(scope_key)
             if cached is not None:
                 # Mark as most-recently used so frequently-touched threads
                 # survive eviction.
-                self._thread_sandboxes.move_to_end(thread_id)
+                self._thread_sandboxes.move_to_end(scope_key)
                 return cached.id
 
         # ``_build_thread_path_mappings`` touches the filesystem
@@ -254,13 +272,13 @@ class LocalSandboxProvider(SandboxProvider):
         with self._lock:
             # Re-check after the lock-free I/O: another caller may have
             # populated the cache while we were computing mappings.
-            cached = self._thread_sandboxes.get(thread_id)
+            cached = self._thread_sandboxes.get(scope_key)
             if cached is None:
-                cached = LocalSandbox(f"local:{thread_id}", path_mappings=new_mappings)
-                self._thread_sandboxes[thread_id] = cached
+                cached = LocalSandbox(f"local:{scope_key}", path_mappings=new_mappings)
+                self._thread_sandboxes[scope_key] = cached
                 self._evict_until_within_cap_locked()
             else:
-                self._thread_sandboxes.move_to_end(thread_id)
+                self._thread_sandboxes.move_to_end(scope_key)
             return cached.id
 
     def _evict_until_within_cap_locked(self) -> None:
@@ -286,14 +304,14 @@ class LocalSandboxProvider(SandboxProvider):
                     return self._generic_sandbox
             return generic
         if isinstance(sandbox_id, str) and sandbox_id.startswith("local:"):
-            thread_id = sandbox_id[len("local:") :]
+            scope_key = sandbox_id[len("local:") :]
             with self._lock:
-                cached = self._thread_sandboxes.get(thread_id)
+                cached = self._thread_sandboxes.get(scope_key)
                 if cached is not None:
                     # Touching a thread via ``get`` (used by tools.py to look
                     # up the sandbox once per tool call) promotes it in LRU
                     # order so an active thread isn't evicted under load.
-                    self._thread_sandboxes.move_to_end(thread_id)
+                    self._thread_sandboxes.move_to_end(scope_key)
                 return cached
         return None
 

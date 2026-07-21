@@ -24,7 +24,7 @@ from pydantic import BaseModel, Field
 from app.gateway.deps import get_thread_store
 from app.gateway.docx_export import build_markdown_docx, docx_media_type
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX, get_paths
-from deerflow.government_project_workspace import government_project_projects_root, government_project_workspace_root
+from deerflow.government_project_workspace import government_project_workspace_root
 from deerflow.knowledge.export_images import (
     ExportEvidenceDocument,
     ExportImageSelectionModelError,
@@ -32,7 +32,7 @@ from deerflow.knowledge.export_images import (
     NoVerifiedImageEvidenceError,
     enrich_export_documents_with_images,
 )
-from deerflow.runtime.user_context import get_effective_user_id
+from deerflow.runtime.user_context import get_effective_user_id, strict_user_context_enabled
 from deerflow.uploads.manager import (
     UnsafeUploadPathError,
     claim_unique_filename,
@@ -243,7 +243,7 @@ def _now_iso() -> str:
 
 
 def _projects_root() -> Path:
-    root = government_project_projects_root().resolve()
+    root = get_paths().user_projects_dir(get_effective_user_id()).resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -278,13 +278,26 @@ def _default_project_root(project_id: str) -> Path:
 
 
 def _default_workspace_root() -> Path:
-    root = government_project_workspace_root().resolve()
+    if strict_user_context_enabled():
+        root = get_paths().user_projects_dir(get_effective_user_id()).resolve()
+    else:
+        root = government_project_workspace_root().resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
 def _ensure_external_project_root(path: Path) -> Path:
     resolved = path.expanduser().resolve()
+    if strict_user_context_enabled():
+        user_root = get_paths().user_dir(get_effective_user_id()).resolve()
+        try:
+            resolved.relative_to(user_root)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Project directory must stay inside the current user's storage root.",
+            ) from exc
+        return resolved
     code_root = _repo_root().resolve()
     try:
         resolved.relative_to(code_root)

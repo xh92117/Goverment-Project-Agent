@@ -188,6 +188,28 @@ def test_protected_post_with_internal_auth_header_passes():
     assert res.status_code == 200
 
 
+def test_authenticated_request_writes_tenant_audit_event(monkeypatch):
+    from app.gateway.internal_auth import create_internal_auth_headers
+
+    events = []
+    monkeypatch.setattr(
+        "app.gateway.auth_middleware.append_tenant_audit_event",
+        lambda **event: events.append(event),
+    )
+    client = TestClient(_make_app())
+
+    response = client.get("/api/models", headers=create_internal_auth_headers())
+
+    assert response.status_code == 200
+    assert response.headers["x-request-id"]
+    assert len(events) == 1
+    assert events[0]["user_id"]
+    assert events[0]["action"] == "http_request"
+    assert events[0]["details"]["method"] == "GET"
+    assert events[0]["details"]["path"] == "/api/models"
+    assert events[0]["details"]["status_code"] == 200
+
+
 # ── Method matrix: PUT/DELETE/PATCH also protected ────────────────────────
 
 

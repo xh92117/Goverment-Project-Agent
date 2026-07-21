@@ -1,16 +1,19 @@
-import { apiFetch, apiJson, jsonBody } from "@/shared/api/client";
+import { apiErrorFromResponse, apiFetch, apiJson, jsonBody } from "@/shared/api/client";
 
 export interface User {
-  id?: string;
-  username?: string;
-  email?: string | null;
-  role?: string;
+  id: string;
+  email: string | null;
+  system_role: string;
+  needs_setup?: boolean;
 }
 
 export interface SetupStatus {
-  initialized?: boolean;
-  setup_required?: boolean;
-  local_auth_enabled?: boolean;
+  needs_setup: boolean;
+}
+
+export interface LoginResponse {
+  expires_in: number;
+  needs_setup: boolean;
 }
 
 export function setupStatus() {
@@ -33,14 +36,16 @@ export async function loginLocal(username: string, password: string) {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
   });
   if (!response.ok) {
-    const detail = await response.json().catch(() => undefined);
-    const message =
-      typeof detail === "object" && detail && "detail" in detail
-        ? String((detail as { detail: unknown }).detail)
-        : `登录失败：HTTP ${response.status}`;
-    throw new Error(message);
+    throw await apiErrorFromResponse(response);
   }
-  return response.json() as Promise<{ user?: User; access_token?: string }>;
+  return response.json() as Promise<LoginResponse>;
+}
+
+export function registerLocal(input: { email: string; password: string }) {
+  return apiJson<User>("/api/v1/auth/register", {
+    method: "POST",
+    body: jsonBody(input),
+  });
 }
 
 export function initializeAdmin(input: { email: string; password: string }) {

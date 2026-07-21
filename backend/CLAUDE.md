@@ -154,6 +154,35 @@ CI runs these regression tests for every pull request via [.github/workflows/bac
 
 ## Architecture
 
+### Multi-user isolation invariants
+
+Production Docker runs with `GATEWAY_ENABLE_LOCAL_AUTH=true` and
+`AGENT_BASE_STRICT_USER_CONTEXT=true`. Auth middleware is the only authority
+for `user_id`: client-supplied runtime context or configurable IDs must never
+override the server-stamped identity or route `thread_id`.
+
+- Private filesystem state belongs under
+  `Paths.user_dir(user_id)`: threads, projects, proposal drafts, custom agents,
+  memory, private knowledge/cache, and tenant logs.
+- The configured `AGENT_BASE_KNOWLEDGE_ROOT` is the shared public knowledge
+  base. `scope=public` mutations are admin-only; combined search reads only the
+  current private root plus the public root and returns result scope.
+- Shared models, MCP definitions, Skills, settings, and channel operations are
+  admin-managed. Runtime use of those resources remains common to users.
+- Thread/run persistence, RunManager memory filtering, MCP session keys,
+  sandbox cache/container IDs, locks, Kubernetes hostPath, and PVC subPath must
+  all preserve the authenticated user dimension.
+- Missing identity must fail closed in strict mode. Explicit `user_id=None` is
+  reserved for migration/admin code; ordinary repository and filesystem paths
+  must not use it to bypass filtering.
+- Operational stdout is shared infrastructure output. Request-time tenant logs
+  and audit JSONL files live in `users/{user_id}/logs/` and must not contain
+  request bodies, credentials, or another tenant's identifiers.
+
+Migration behavior is implemented in `scripts/migrate_user_isolation.py` and
+documented in `../docs/MULTI_USER_ISOLATION.md`. Add isolation tests whenever a
+new file store, cache, background queue, session pool, or resource ID is added.
+
 ### Harness / App Split
 
 The backend is split into two layers with a strict dependency direction:

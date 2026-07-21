@@ -10,7 +10,8 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.gateway.docx_export import build_markdown_docx, docx_media_type
-from deerflow.government_project_workspace import government_project_drafts_root
+from deerflow.config.paths import get_paths
+from deerflow.runtime.user_context import get_effective_user_id
 
 router = APIRouter(prefix="/api/proposal-drafts", tags=["proposal-drafts"])
 
@@ -74,7 +75,7 @@ class ProposalDraftVersionReadResponse(BaseModel):
 
 
 def _drafts_root() -> Path:
-    root = government_project_drafts_root().resolve()
+    root = get_paths().user_drafts_dir(get_effective_user_id()).resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
 

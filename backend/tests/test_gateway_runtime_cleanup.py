@@ -116,6 +116,21 @@ def test_gateway_compose_uses_agent_base_internal_auth_token_only():
         assert "DEER_FLOW_INTERNAL_AUTH_TOKEN=" not in gateway_section
 
 
+def test_production_compose_enables_fail_closed_multi_user_mode_by_default():
+    content = _read("docker/docker-compose.yaml")
+    gateway_section = content.split("container_name: agent-base-gateway", 1)[1].split("env_file:", 1)[0]
+
+    assert "GATEWAY_ENABLE_LOCAL_AUTH=${GATEWAY_ENABLE_LOCAL_AUTH:-true}" in gateway_section
+    assert "AGENT_BASE_STRICT_USER_CONTEXT=${AGENT_BASE_STRICT_USER_CONTEXT:-true}" in gateway_section
+
+
+def test_provisioner_compose_exposes_user_scoped_host_root():
+    content = _read("docker/docker-compose.yaml")
+    provisioner_section = content.split("container_name: agent-base-provisioner", 1)[1].split("env_file:", 1)[0]
+
+    assert "USERS_HOST_PATH=${AGENT_BASE_HOME}/users" in provisioner_section
+
+
 def test_gateway_compose_uses_agent_base_runtime_paths_only():
     legacy_runtime_envs = (
         "DEER_FLOW_PROJECT_ROOT=",
