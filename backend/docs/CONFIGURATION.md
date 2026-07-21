@@ -33,6 +33,25 @@ AGENT_BASE_DOCKER_SOCKET=/var/run/docker.sock
 Existing `.deer-flow` directories and `DEER_FLOW_*` variables are still read as
 legacy compatibility inputs.
 
+Set the same `AGENT_BASE_HOME`/`AGENT_BASE_HOST_BASE_DIR` values for the launcher,
+direct Uvicorn commands, tests, and maintenance scripts. Otherwise a source-tree
+`.agent-base` can silently shadow the external runtime directory.
+
+## Subagents and Execution Modes
+
+`subagents.enabled` is the global authorization switch. A run may disable
+delegation, but neither a client nor the `deep` execution mode can enable it when
+the global switch is false. Unknown fields in the root, per-agent override, and
+custom-agent subagent schemas are rejected.
+
+`execution_modes.<mode>.recursion_limit` and
+`execution_modes.<mode>.max_concurrent_subagents` are server-enforced run limits.
+The latter limits `task` calls in one lead-agent response. The independent
+`subagents.max_process_concurrent_subagents` value limits executing subagents
+across all users and runs in one process. `subagents.tool_call_limits` applies
+hard per-delegated-task tool budgets; loop detection remains active for other
+repetitive patterns.
+
 ## Sandbox
 
 `allow_host_bash` is `false` by default. Prefer a container sandbox for any

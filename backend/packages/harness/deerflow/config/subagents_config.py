@@ -2,13 +2,15 @@
 
 import logging
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
 
 class SubagentOverrideConfig(BaseModel):
     """Per-agent configuration overrides."""
+
+    model_config = ConfigDict(extra="forbid")
 
     timeout_seconds: int | None = Field(
         default=None,
@@ -33,6 +35,8 @@ class SubagentOverrideConfig(BaseModel):
 
 class CustomSubagentConfig(BaseModel):
     """User-defined subagent type declared in config.yaml."""
+
+    model_config = ConfigDict(extra="forbid")
 
     description: str = Field(
         description="When the lead agent should delegate to this subagent",
@@ -71,6 +75,33 @@ class CustomSubagentConfig(BaseModel):
 class SubagentsAppConfig(BaseModel):
     """Configuration for the subagent system."""
 
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(
+        default=False,
+        description="Global authorization switch for subagent delegation. Runtime modes and callers may disable it, but cannot enable delegation when this is false.",
+    )
+    max_concurrent_subagents: int = Field(
+        default=3,
+        ge=1,
+        le=6,
+        description="Default hard limit for task calls in one lead-agent model response when the execution mode does not specify a stricter limit.",
+    )
+    max_process_concurrent_subagents: int = Field(
+        default=4,
+        ge=1,
+        le=6,
+        description="Hard process-wide limit for subagents that may execute at the same time across all users and runs.",
+    )
+    tool_call_limits: dict[str, int] = Field(
+        default_factory=lambda: {
+            "web_search": 2,
+            "web_fetch": 3,
+            "web_extract": 1,
+        },
+        description="Hard per-task tool-call limits enforced inside every subagent. Omit a tool name to leave it governed by loop detection only.",
+    )
+
     timeout_seconds: int = Field(
         default=900,
         ge=1,
@@ -89,6 +120,19 @@ class SubagentsAppConfig(BaseModel):
         default_factory=dict,
         description="User-defined subagent types keyed by agent name",
     )
+
+    @field_validator("tool_call_limits")
+    @classmethod
+    def _validate_tool_call_limits(cls, value: dict[str, int]) -> dict[str, int]:
+        normalized: dict[str, int] = {}
+        for raw_name, raw_limit in value.items():
+            name = raw_name.strip()
+            if not name:
+                raise ValueError("tool_call_limits keys must be non-empty tool names")
+            if isinstance(raw_limit, bool) or not isinstance(raw_limit, int) or raw_limit < 1:
+                raise ValueError(f"tool_call_limits[{name!r}] must be an integer >= 1")
+            normalized[name] = raw_limit
+        return normalized
 
     def get_timeout_for(self, agent_name: str) -> int:
         """Get the effective timeout for a specific agent.
@@ -173,7 +217,11 @@ def load_subagents_config_from_dict(config_dict: dict) -> None:
 
     if overrides_summary or custom_agents_names:
         logger.info(
-            "Subagents config loaded: default timeout=%ss, default max_turns=%s, per-agent overrides=%s, custom_agents=%s",
+            "Subagents config loaded: enabled=%s, response_limit=%s, process_limit=%s, tool_call_limits=%s, default timeout=%ss, default max_turns=%s, per-agent overrides=%s, custom_agents=%s",
+            _subagents_config.enabled,
+            _subagents_config.max_concurrent_subagents,
+            _subagents_config.max_process_concurrent_subagents,
+            _subagents_config.tool_call_limits,
             _subagents_config.timeout_seconds,
             _subagents_config.max_turns,
             overrides_summary or "none",

@@ -236,6 +236,18 @@ def build_subagent_runtime_middlewares(
 
         middlewares.append(DeferredToolFilterMiddleware(deferred_setup.deferred_names, deferred_setup.catalog_hash))
 
+    # Subagent retrieval budgets are hard runtime limits rather than prompt-only
+    # guidance. Loop detection is also applied to isolated agents so repeated
+    # non-web tool patterns cannot consume the entire recursion allowance.
+    from deerflow.agents.middlewares.tool_call_budget_middleware import ToolCallBudgetMiddleware
+
+    middlewares.append(ToolCallBudgetMiddleware(app_config.subagents.tool_call_limits))
+
+    if app_config.loop_detection.enabled:
+        from deerflow.agents.middlewares.loop_detection_middleware import LoopDetectionMiddleware
+
+        middlewares.append(LoopDetectionMiddleware.from_config(app_config.loop_detection))
+
     # Same provider safety-termination guard the lead agent uses — subagents
     # are equally exposed to truncated tool_calls returned with
     # finish_reason=content_filter (and friends), and the bad call would then

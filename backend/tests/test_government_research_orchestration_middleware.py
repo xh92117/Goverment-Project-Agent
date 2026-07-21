@@ -27,7 +27,8 @@ def test_blocks_lead_web_search_before_task_for_complex_research():
     assert isinstance(result, ToolMessage)
     assert result.status == "error"
     assert result.name == "web_search"
-    assert "并行发起 2-3 个 `task` 调用" in str(result.content)
+    assert "至少 1 个" in str(result.content)
+    assert "优先 2-3 个" in str(result.content)
     handler.assert_not_called()
 
 

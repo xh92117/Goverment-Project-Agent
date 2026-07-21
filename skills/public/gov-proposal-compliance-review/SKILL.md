@@ -11,11 +11,17 @@ allowed-tools:
   - web_extract
   - knowledge_search_index
   - knowledge_read_file
+  - knowledge_search_evidence
+  - knowledge_read_evidence
+  - knowledge_list_images
   - knowledge_incremental_update
   - proposal_save_markdown
+  - present_files
+  - view_image
   - ask_clarification
   - write_todos
   - task
+  - update_agent
 ---
 
 # Government Project Compliance Review

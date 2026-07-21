@@ -379,6 +379,62 @@ task(description="Oracle Cloud analysis", prompt="...", subagent_type="general-p
 </subagent_system>"""
 
 
+def _build_government_subagent_section(max_concurrent: int, *, app_config: AppConfig | None = None) -> str:
+    """Build the single-batch orchestration contract for declaration research."""
+    n = max_concurrent
+    configured_limits = (
+        getattr(getattr(app_config, "subagents", None), "tool_call_limits", None)
+        if app_config is not None
+        else None
+    ) or {"web_search": 2, "web_fetch": 3, "web_extract": 1}
+    search_limit = configured_limits.get("web_search")
+    fetch_limit = configured_limits.get("web_fetch")
+    extract_limit = configured_limits.get("web_extract")
+    retrieval_limits = ", ".join(
+        part
+        for part in (
+            f"{search_limit} `web_search`" if search_limit is not None else "",
+            f"{fetch_limit} `web_fetch`" if fetch_limit is not None else "",
+            f"{extract_limit} `web_extract`" if extract_limit is not None else "",
+        )
+        if part
+    )
+    retrieval_rule = (
+        f"Runtime enforces at most {retrieval_limits} calls per delegated task."
+        if retrieval_limits
+        else "Runtime loop detection still applies to every delegated task."
+    )
+    available_names = get_available_subagent_names(app_config=app_config) if app_config is not None else get_available_subagent_names()
+    bash_available = "bash" in available_names
+    available_subagents = _build_available_subagents_description(available_names, bash_available, app_config=app_config)
+    return f"""<subagent_system>
+**GOVERNMENT-PROJECT SUBAGENT ORCHESTRATION ACTIVE**
+
+You are the lead synthesizer. For a complex declaration-research request:
+1. Decompose it into non-overlapping expert deliverables.
+2. Launch one focused initial batch containing at least 1 and at most {n} parallel `task` calls; prefer 2-3 when the evidence domains genuinely differ.
+3. Wait for the complete initial batch, then synthesize. Do not launch ordinary second or later batches after a useful result returns.
+4. Only when exactly one of two initial attempts succeeded may you launch one additional gap-filling `task`.
+
+**HARD RESPONSE LIMIT: AT MOST {n} `task` CALLS.** Calls above this limit are discarded by runtime enforcement.
+
+**Available Subagents:**
+{available_subagents}
+
+**Selection and evidence rules:**
+- Prefer the matching specialized expert over `general-purpose`.
+- Use `literature-researcher` for research status, literature, technical routes, trends, and research gaps.
+- Use `standards-patent-researcher` for standards, tests, instruments, patents, procedures, and engineering applications.
+- Use `guide-analyzer` for policy notices, declaration guides, eligibility, deadlines, materials, and official requirements.
+- Give every research expert a bounded retrieval assignment. {retrieval_rule}
+- Include project/applicant scope, owned question, supplied inputs, evidence authority, exclusions, and required handoff in every expert assignment.
+- Require Simplified Chinese output unless the user explicitly requests another language.
+- The lead agent owns deduplication, conflict resolution, evidence grading, and the final user-facing answer.
+
+Do not delegate simple one-fact lookups, meta conversation, immediate clarification, or strictly sequential work.
+</subagent_system>"""
+
+
 SYSTEM_PROMPT_TEMPLATE = """
 <role>
 You are {agent_identity}.
@@ -775,6 +831,7 @@ def _bool_label(value: object) -> str:
 def _build_government_project_section(
     *,
     agent_name: str | None,
+    max_concurrent_subagents: int = 3,
     tools: object = None,
     capabilities: object = None,
     model_parameters: object = None,
@@ -868,8 +925,9 @@ Behavioral requirements:
   search the web for related materials as complex research tasks unless the user explicitly asks for one specific
   fact, URL, date, or document.
 - When subagent delegation is enabled and the task is complex, follow the Deer-Flow pattern: decompose -> delegate
-  -> synthesize. Launch 2-3 focused `task` calls in parallel before any lead-agent `web_search`, `web_fetch`, or
-  `web_extract` call. This is mandatory for government-project research-status and literature-review tasks.
+  -> synthesize. Launch one focused initial batch of 1-{max_concurrent_subagents} parallel `task` calls before any
+  lead-agent `web_search`, `web_fetch`, or `web_extract` call; prefer 2-3 only when the evidence domains genuinely
+  differ. This is mandatory for government-project research-status and literature-review tasks.
   Prefer `literature-researcher` for research status/literature/latest progress, `guide-analyzer` for policy guides
   and official notices, `topic-planner` for direction/title comparison, and `compliance-reviewer` for risk checks.
   Ask each subagent for concise findings, source links/anchors, uncertainty, and conflicts.
@@ -938,25 +996,43 @@ def apply_prompt_template(
 ) -> str:
     # Include subagent section only if enabled (from runtime parameter)
     n = max_concurrent_subagents
-    subagent_section = _build_subagent_section(n, app_config=app_config) if subagent_enabled else ""
+    subagent_section = (
+        _build_government_subagent_section(n, app_config=app_config)
+        if subagent_enabled and agent_name == "government-project-declaration"
+        else _build_subagent_section(n, app_config=app_config)
+        if subagent_enabled
+        else ""
+    )
 
     # Add subagent reminder to critical_reminders if enabled
-    subagent_reminder = (
-        "- **Orchestrator Mode**: You are a task orchestrator - decompose complex tasks into parallel sub-tasks. "
-        f"**HARD LIMIT: max {n} `task` calls per response.** "
-        f"If >{n} sub-tasks, split into sequential batches of ≤{n}. Synthesize after ALL batches complete.\n"
-        if subagent_enabled
-        else ""
-    )
+    if subagent_enabled and agent_name == "government-project-declaration":
+        subagent_reminder = (
+            "- **Orchestrator Mode**: For complex declaration research, launch one initial expert batch, "
+            f"with a hard maximum of {n} `task` calls, then synthesize. Do not start ordinary later batches.\n"
+        )
+    else:
+        subagent_reminder = (
+            "- **Orchestrator Mode**: You are a task orchestrator - decompose complex tasks into parallel sub-tasks. "
+            f"**HARD LIMIT: max {n} `task` calls per response.** "
+            f"If >{n} sub-tasks, split into sequential batches of ≤{n}. Synthesize after ALL batches complete.\n"
+            if subagent_enabled
+            else ""
+        )
 
     # Add subagent thinking guidance if enabled
-    subagent_thinking = (
-        "- **DECOMPOSITION CHECK: Can this task be broken into 2+ parallel sub-tasks? If YES, COUNT them. "
-        f"If count > {n}, you MUST plan batches of ≤{n} and only launch the FIRST batch now. "
-        f"NEVER launch more than {n} `task` calls in one response.**\n"
-        if subagent_enabled
-        else ""
-    )
+    if subagent_enabled and agent_name == "government-project-declaration":
+        subagent_thinking = (
+            "- **DECOMPOSITION CHECK: Choose only non-overlapping experts needed in the initial batch. "
+            f"Launch 1-{n}, prefer 2-3 when justified, and synthesize after that batch.**\n"
+        )
+    else:
+        subagent_thinking = (
+            "- **DECOMPOSITION CHECK: Can this task be broken into 2+ parallel sub-tasks? If YES, COUNT them. "
+            f"If count > {n}, you MUST plan batches of ≤{n} and only launch the FIRST batch now. "
+            f"NEVER launch more than {n} `task` calls in one response.**\n"
+            if subagent_enabled
+            else ""
+        )
 
     # Get skills section
     skills_section = get_skills_prompt_section(available_skills, app_config=app_config)
@@ -970,6 +1046,7 @@ def apply_prompt_template(
     acp_and_mounts_section = "\n".join(section for section in (acp_section, custom_mounts_section) if section)
     government_project_section = _build_government_project_section(
         agent_name=agent_name,
+        max_concurrent_subagents=n,
         tools=government_project_tools,
         capabilities=government_project_capabilities,
         model_parameters=government_project_model_parameters,

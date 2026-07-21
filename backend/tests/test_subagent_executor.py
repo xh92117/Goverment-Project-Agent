@@ -26,6 +26,71 @@ import pytest
 
 from deerflow.skills.types import Skill
 
+
+def test_scheduler_can_host_every_supported_process_slot(_setup_executor_classes):
+    from deerflow.subagents import executor as executor_module
+
+    assert executor_module._scheduler_pool._max_workers == executor_module.MAX_PROCESS_SUBAGENT_CAPACITY
+
+
+def test_process_capacity_gate_blocks_until_slot_is_released(_setup_executor_classes):
+    from deerflow.subagents import executor as executor_module
+
+    gate = executor_module._ProcessSubagentCapacityGate()
+    cancel = threading.Event()
+    acquired = threading.Event()
+
+    assert gate.acquire(1, cancel) is True
+
+    def waiter():
+        if gate.acquire(1, cancel):
+            acquired.set()
+            gate.release()
+
+    thread = threading.Thread(target=waiter)
+    thread.start()
+    assert acquired.wait(timeout=0.1) is False
+
+    gate.release()
+    assert acquired.wait(timeout=1) is True
+    thread.join(timeout=1)
+    assert gate.active == 0
+
+
+def test_process_capacity_gate_honors_cancellation_while_waiting(_setup_executor_classes):
+    from deerflow.subagents import executor as executor_module
+
+    gate = executor_module._ProcessSubagentCapacityGate()
+    first_cancel = threading.Event()
+    waiting_cancel = threading.Event()
+    outcome: list[bool] = []
+
+    assert gate.acquire(1, first_cancel) is True
+
+    thread = threading.Thread(target=lambda: outcome.append(gate.acquire(1, waiting_cancel)))
+    thread.start()
+    waiting_cancel.set()
+    thread.join(timeout=1)
+
+    assert outcome == [False]
+    gate.release()
+
+
+def test_executor_reads_process_limit_from_app_config(classes):
+    SubagentExecutor = classes["SubagentExecutor"]
+    SubagentConfig = classes["SubagentConfig"]
+    app_config = SimpleNamespace(
+        models=[SimpleNamespace(name="model")],
+        subagents=SimpleNamespace(max_process_concurrent_subagents=4),
+    )
+    executor = SubagentExecutor(
+        config=SubagentConfig(name="test", description="test", model="model"),
+        tools=[],
+        app_config=app_config,
+    )
+
+    assert executor._process_concurrency_limit() == 4
+
 # Module names that need to be mocked to break circular imports
 _MOCKED_MODULE_NAMES = [
     "deerflow.agents",

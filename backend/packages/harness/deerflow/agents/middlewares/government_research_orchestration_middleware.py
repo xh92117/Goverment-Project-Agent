@@ -40,7 +40,8 @@ _SIMPLE_LOOKUP_RE = re.compile(
 
 _BLOCK_MESSAGE = (
     "错误：这是政府项目申报场景下的复杂研究请求。当前已启用子智能体委派，"
-    "主智能体必须先拆解任务，并并行发起 2-3 个 `task` 调用。"
+    "主智能体必须先拆解任务，并发起一个聚焦的初始 `task` 批次；至少 1 个，证据领域确实不同时优先 2-3 个，"
+    "且不得超过当前运行模式的响应级硬上限。"
     "例如：研究现状/文献/最新进展使用 literature-researcher，"
     "标准/检测方法/专利使用 standards-patent-researcher，"
     "政策通知/申报指南使用 guide-analyzer。子智能体结果返回后再综合；"

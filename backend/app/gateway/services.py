@@ -165,7 +165,13 @@ def _write_runtime_container_value(config: dict[str, Any], key: str, value: Any)
 
 
 def apply_execution_mode_budget(config: dict[str, Any], app_config: Any | None) -> None:
-    """Apply the selected execution-mode budget to a run config in place."""
+    """Apply hard execution-mode limits and global subagent authorization.
+
+    Execution-mode values are ceilings, not minimums. Client-supplied values
+    therefore cannot raise recursion or per-response task-call limits above the
+    server configuration. A caller may still explicitly disable subagents for
+    one run, while ``subagents.enabled=false`` remains a global kill switch.
+    """
     mode = normalize_execution_mode(_runtime_container_value(config, "execution_mode") or DEFAULT_EXECUTION_MODE)
     _write_runtime_container_value(config, "execution_mode", mode)
 
@@ -174,16 +180,23 @@ def apply_execution_mode_budget(config: dict[str, Any], app_config: Any | None) 
     budget = app_config.execution_modes.budget_for(mode)
 
     if budget.recursion_limit is not None:
-        current = config.get("recursion_limit")
-        config["recursion_limit"] = max(int(current or 0), budget.recursion_limit)
+        config["recursion_limit"] = budget.recursion_limit
 
-    if budget.subagent_enabled is not None:
-        _write_runtime_container_value(config, "subagent_enabled", budget.subagent_enabled)
+    subagents_config = getattr(app_config, "subagents", None)
+    # AppConfig always supplies ``subagents``. The permissive fallback keeps
+    # compatibility with lightweight embedding/test config objects that predate
+    # the global switch; real deployments remain governed by the explicit field.
+    globally_enabled = bool(getattr(subagents_config, "enabled", True))
+    mode_enabled = budget.subagent_enabled
+    mode_allows_subagents = globally_enabled and mode_enabled is not False
+    requested_enabled = _runtime_container_value(config, "subagent_enabled")
+    effective_enabled = mode_allows_subagents if requested_enabled is None else mode_allows_subagents and bool(requested_enabled)
+    _write_runtime_container_value(config, "subagent_enabled", effective_enabled)
 
-    if budget.max_concurrent_subagents is not None:
-        current = _runtime_container_value(config, "max_concurrent_subagents")
-        next_value = max(int(current or 0), budget.max_concurrent_subagents)
-        _write_runtime_container_value(config, "max_concurrent_subagents", next_value)
+    response_limit = budget.max_concurrent_subagents
+    if response_limit is None:
+        response_limit = int(getattr(subagents_config, "max_concurrent_subagents", 3))
+    _write_runtime_container_value(config, "max_concurrent_subagents", response_limit)
 
 
 def merge_run_context_overrides(config: dict[str, Any], context: Mapping[str, Any] | None) -> None:

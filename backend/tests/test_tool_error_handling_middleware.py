@@ -136,13 +136,18 @@ def test_build_subagent_runtime_middlewares_threads_app_config_to_llm_middleware
     assert captured["app_config"] is app_config
     # 7 baseline (ToolOutputBudget, ThreadData, Sandbox, DanglingToolCall,
     # LLMErrorHandling, SandboxAudit, ToolErrorHandling)
+    # + ToolCallBudgetMiddleware + LoopDetectionMiddleware
     # + 1 SafetyFinishReasonMiddleware (enabled by default).
+    from deerflow.agents.middlewares.loop_detection_middleware import LoopDetectionMiddleware
     from deerflow.agents.middlewares.safety_finish_reason_middleware import SafetyFinishReasonMiddleware
+    from deerflow.agents.middlewares.tool_call_budget_middleware import ToolCallBudgetMiddleware
     from deerflow.agents.middlewares.tool_output_budget_middleware import ToolOutputBudgetMiddleware
 
-    assert len(middlewares) == 8
+    assert len(middlewares) == 10
     assert isinstance(middlewares[0], ToolOutputBudgetMiddleware)
     assert any(isinstance(m, ToolErrorHandlingMiddleware) for m in middlewares)
+    assert any(isinstance(m, ToolCallBudgetMiddleware) for m in middlewares)
+    assert any(isinstance(m, LoopDetectionMiddleware) for m in middlewares)
     assert isinstance(middlewares[-1], SafetyFinishReasonMiddleware)
 
 

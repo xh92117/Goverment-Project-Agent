@@ -13,6 +13,8 @@ _CONDITIONALLY_INJECTED_TOOL_NAMES = frozenset(
         "task",
         "setup_agent",
         "update_agent",
+        # Added only when the selected model supports vision.
+        "view_image",
     }
 )
 
@@ -47,14 +49,19 @@ def allowed_tool_names_for_skills(skills: list[Skill]) -> set[str] | None:
     return allowed
 
 
-def filter_tools_by_skill_allowed_tools[ToolT: NamedTool](tools: list[ToolT], skills: list[Skill]) -> list[ToolT]:
+def filter_tools_by_skill_allowed_tools[ToolT: NamedTool](
+    tools: list[ToolT],
+    skills: list[Skill],
+    *,
+    warn_on_missing: bool = True,
+) -> list[ToolT]:
     allowed = allowed_tool_names_for_skills(skills)
     if allowed is None:
         return tools
 
     available = {tool.name for tool in tools}
     missing = sorted(allowed - available - _CONDITIONALLY_INJECTED_TOOL_NAMES)
-    if missing:
+    if missing and warn_on_missing:
         skill_names = sorted(skill.name for skill in skills if skill.allowed_tools is not None)
         logger.warning(
             "Skill allowed-tools declare tool(s) not present in current binding: %s (skills: %s). "

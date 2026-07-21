@@ -312,9 +312,10 @@ Proxied through nginx: `/api/langgraph/*` → Gateway LangGraph-compatible runti
 ### Subagent System (`packages/harness/deerflow/subagents/`)
 
 **Built-in Agents**: `general-purpose` (all tools except `task`) and `bash` (command specialist)
-**Execution**: Dual thread pool - `_scheduler_pool` (3 workers) + `_execution_pool` (3 workers)
-**Concurrency**: `MAX_CONCURRENT_SUBAGENTS = 3` enforced by `SubagentLimitMiddleware` (truncates excess tool calls in `after_model`), 15-minute timeout
-**Flow**: `task()` tool → `SubagentExecutor` → background thread → poll 5s → SSE events → result
+**Execution**: `_scheduler_pool` has 6 host workers and submits each task to one persistent isolated asyncio loop; `_ProcessSubagentCapacityGate` applies the hot-reloadable process-wide execution limit (default 4).
+**Concurrency**: `SubagentLimitMiddleware` enforces the execution-mode response limit (standard 3, deep 4 by default). `subagents.enabled` is the global authorization switch; callers may disable delegation but cannot override a disabled global switch.
+**Budgets**: `ToolCallBudgetMiddleware` hard-limits configured subagent tools (default: `web_search=2`, `web_fetch=3`, `web_extract=1`), and subagents also receive `LoopDetectionMiddleware`. Per-agent timeout/turn settings remain configurable.
+**Flow**: `task()` tool → `SubagentExecutor` → process capacity gate → persistent isolated loop → poll 5s → SSE events → result
 **Events**: `task_started`, `task_running`, `task_completed`/`task_failed`/`task_timed_out`
 **Deferred MCP tools** (if `tool_search.enabled`): `SubagentExecutor._build_initial_state` assembles deferral after policy filtering via the shared `assemble_deferred_tools` (fail-closed), appends the `tool_search` tool, injects the `<available-deferred-tools>` section into the subagent's `SystemMessage`, and threads the setup to `_create_agent`, which attaches `DeferredToolFilterMiddleware` through `build_subagent_runtime_middlewares(deferred_setup=...)`. Subagents thus withhold full MCP schemas until promotion, same as the lead agent; each task run gets a fresh `ThreadState` so promotion is isolated per run
 

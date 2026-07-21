@@ -95,6 +95,16 @@ class TestSubagentOverrideConfig:
 
 
 class TestSubagentsAppConfigDefaults:
+    def test_global_switch_and_capacity_defaults(self):
+        config = SubagentsAppConfig()
+        assert config.enabled is False
+        assert config.max_concurrent_subagents == 3
+        assert config.max_process_concurrent_subagents == 4
+
+    def test_default_subagent_tool_call_limits(self):
+        config = SubagentsAppConfig()
+        assert config.tool_call_limits == {"web_search": 2, "web_fetch": 3, "web_extract": 1}
+
     def test_default_timeout(self):
         config = SubagentsAppConfig()
         assert config.timeout_seconds == 900
@@ -123,6 +133,38 @@ class TestSubagentsAppConfigDefaults:
             SubagentsAppConfig(timeout_seconds=-60)
         with pytest.raises(ValueError):
             SubagentsAppConfig(max_turns=-60)
+
+    def test_rejects_unknown_root_field(self):
+        with pytest.raises(ValueError):
+            SubagentsAppConfig(unknown_budget=3)
+
+    def test_rejects_unknown_nested_fields(self):
+        with pytest.raises(ValueError):
+            SubagentsAppConfig(agents={"researcher": {"unknown_override": True}})
+
+        with pytest.raises(ValueError):
+            SubagentsAppConfig(
+                custom_agents={
+                    "researcher": {
+                        "description": "Research",
+                        "system_prompt": "Research carefully.",
+                        "unknown_custom_setting": True,
+                    }
+                }
+            )
+
+    @pytest.mark.parametrize("field", ["max_concurrent_subagents", "max_process_concurrent_subagents"])
+    def test_rejects_concurrency_outside_supported_range(self, field: str):
+        with pytest.raises(ValueError):
+            SubagentsAppConfig(**{field: 0})
+        with pytest.raises(ValueError):
+            SubagentsAppConfig(**{field: 7})
+
+    def test_rejects_invalid_tool_call_limits(self):
+        with pytest.raises(ValueError):
+            SubagentsAppConfig(tool_call_limits={"web_search": 0})
+        with pytest.raises(ValueError):
+            SubagentsAppConfig(tool_call_limits={"": 1})
 
 
 # ---------------------------------------------------------------------------

@@ -370,7 +370,7 @@ def test_apply_execution_mode_budget_deep_mode():
     assert config["context"]["max_concurrent_subagents"] == 4
 
 
-def test_apply_execution_mode_budget_preserves_larger_explicit_limits():
+def test_apply_execution_mode_budget_caps_larger_explicit_limits():
     from types import SimpleNamespace
 
     from app.gateway.services import apply_execution_mode_budget, build_run_config, merge_run_context_overrides
@@ -384,8 +384,46 @@ def test_apply_execution_mode_budget_preserves_larger_explicit_limits():
     merge_run_context_overrides(config, {"execution_mode": "deep"})
     apply_execution_mode_budget(config, SimpleNamespace(execution_modes=ExecutionModesConfig()))
 
-    assert config["recursion_limit"] == 250
-    assert config["configurable"]["max_concurrent_subagents"] == 6
+    assert config["recursion_limit"] == 200
+    assert config["configurable"]["max_concurrent_subagents"] == 4
+
+
+def test_apply_execution_mode_budget_uses_global_switch_for_standard_mode():
+    from types import SimpleNamespace
+
+    from app.gateway.services import apply_execution_mode_budget, build_run_config, merge_run_context_overrides
+    from deerflow.config.execution_modes_config import ExecutionModesConfig
+
+    config = build_run_config("thread-1", None, None)
+    merge_run_context_overrides(config, {"execution_mode": "standard"})
+    app_config = SimpleNamespace(
+        execution_modes=ExecutionModesConfig(),
+        subagents=SimpleNamespace(enabled=True, max_concurrent_subagents=3),
+    )
+
+    apply_execution_mode_budget(config, app_config)
+
+    assert config["recursion_limit"] == 100
+    assert config["configurable"]["subagent_enabled"] is True
+    assert config["configurable"]["max_concurrent_subagents"] == 3
+
+
+def test_apply_execution_mode_budget_global_switch_is_kill_switch():
+    from types import SimpleNamespace
+
+    from app.gateway.services import apply_execution_mode_budget, build_run_config, merge_run_context_overrides
+    from deerflow.config.execution_modes_config import ExecutionModesConfig
+
+    config = build_run_config("thread-1", None, None)
+    merge_run_context_overrides(config, {"execution_mode": "deep", "subagent_enabled": True})
+    app_config = SimpleNamespace(
+        execution_modes=ExecutionModesConfig(),
+        subagents=SimpleNamespace(enabled=False, max_concurrent_subagents=3),
+    )
+
+    apply_execution_mode_budget(config, app_config)
+
+    assert config["configurable"]["subagent_enabled"] is False
 
 
 def test_merge_run_context_overrides_propagates_to_runtime_context():

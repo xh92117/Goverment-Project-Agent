@@ -138,8 +138,46 @@ class SubagentResult:
 _background_tasks: dict[str, SubagentResult] = {}
 _background_tasks_lock = threading.Lock()
 
-# Thread pool for background task scheduling and orchestration
-_scheduler_pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="subagent-scheduler-")
+# The scheduler can host every supported process-level slot. Actual execution
+# capacity is governed by ``_process_capacity_gate`` using the hot-reloaded
+# ``subagents.max_process_concurrent_subagents`` setting.
+MAX_PROCESS_SUBAGENT_CAPACITY = 6
+_scheduler_pool = ThreadPoolExecutor(max_workers=MAX_PROCESS_SUBAGENT_CAPACITY, thread_name_prefix="subagent-scheduler-")
+
+
+class _ProcessSubagentCapacityGate:
+    """Process-wide dynamic concurrency gate shared by all parent runs."""
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._active = 0
+
+    def acquire(self, limit: int, cancel_event: threading.Event) -> bool:
+        bounded_limit = max(1, min(MAX_PROCESS_SUBAGENT_CAPACITY, limit))
+        with self._condition:
+            while self._active >= bounded_limit:
+                if cancel_event.is_set():
+                    return False
+                self._condition.wait(timeout=0.1)
+            if cancel_event.is_set():
+                return False
+            self._active += 1
+            return True
+
+    def release(self) -> None:
+        with self._condition:
+            if self._active <= 0:
+                raise RuntimeError("Subagent process capacity released without a matching acquire")
+            self._active -= 1
+            self._condition.notify_all()
+
+    @property
+    def active(self) -> int:
+        with self._condition:
+            return self._active
+
+
+_process_capacity_gate = _ProcessSubagentCapacityGate()
 
 # Persistent event loop for isolated subagent executions triggered from an
 # already-running parent loop. Reusing one long-lived loop avoids creating a
@@ -330,6 +368,11 @@ class SubagentExecutor:
 
         logger.info(f"[trace={self.trace_id}] SubagentExecutor initialized: {config.name} with {len(self.tools)} tools")
 
+    def _process_concurrency_limit(self) -> int:
+        app_config = self.app_config or get_app_config()
+        subagents_config = getattr(app_config, "subagents", None)
+        return int(getattr(subagents_config, "max_process_concurrent_subagents", 4))
+
     def _create_agent(self, tools: list[BaseTool] | None = None, *, deferred_setup: "DeferredToolSetup | None" = None):
         """Create the agent instance.
 
@@ -386,7 +429,11 @@ class SubagentExecutor:
         return all_skills
 
     def _apply_skill_allowed_tools(self, skills: list[Skill]) -> list[BaseTool]:
-        return filter_tools_by_skill_allowed_tools(self._base_tools, skills)
+        # A custom subagent's explicit tool allowlist is intentionally narrower
+        # than the union of its reusable skills. Missing declarations here are
+        # expected; configured tools that the skill policy removes are still
+        # enforced and covered by the tool-contract tests.
+        return filter_tools_by_skill_allowed_tools(self._base_tools, skills, warn_on_missing=False)
 
     async def _load_skill_messages(self, skills: list[Skill]) -> list[SystemMessage]:
         """Load skill content as conversation items based on config.skills.
@@ -791,12 +838,20 @@ class SubagentExecutor:
 
         # Submit to scheduler pool
         def run_task():
-            with _background_tasks_lock:
-                _background_tasks[task_id].status = SubagentStatus.RUNNING
-                _background_tasks[task_id].started_at = datetime.now()
-                result_holder = _background_tasks[task_id]
-
+            process_slot_acquired = False
             try:
+                with _background_tasks_lock:
+                    result_holder = _background_tasks[task_id]
+
+                process_slot_acquired = _process_capacity_gate.acquire(self._process_concurrency_limit(), result_holder.cancel_event)
+                if not process_slot_acquired:
+                    result_holder.try_set_terminal(SubagentStatus.CANCELLED, error="Cancelled before a process execution slot became available")
+                    return
+
+                with _background_tasks_lock:
+                    result_holder.status = SubagentStatus.RUNNING
+                    result_holder.started_at = datetime.now()
+
                 # Submit execution directly to the persistent isolated loop so the
                 # background path does not create a temporary loop via execute().
                 execution_future = _submit_to_isolated_loop_in_context(
@@ -820,6 +875,9 @@ class SubagentExecutor:
                 with _background_tasks_lock:
                     task_result = _background_tasks[task_id]
                 task_result.try_set_terminal(SubagentStatus.FAILED, error=str(e))
+            finally:
+                if process_slot_acquired:
+                    _process_capacity_gate.release()
 
         _scheduler_pool.submit(run_task)
         return task_id

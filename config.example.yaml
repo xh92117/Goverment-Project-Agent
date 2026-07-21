@@ -1,4 +1,4 @@
-config_version: 11
+config_version: 12
 log_level: info
 models:
 - name: deepseek-v4-flash
@@ -44,6 +44,11 @@ sandbox:
 subagents:
   enabled: true
   max_concurrent_subagents: 3
+  max_process_concurrent_subagents: 4
+  tool_call_limits:
+    web_search: 2
+    web_fetch: 3
+    web_extract: 1
   max_turns: 16
   timeout_seconds: 300
   agents:

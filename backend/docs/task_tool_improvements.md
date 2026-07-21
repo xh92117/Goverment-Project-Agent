@@ -98,22 +98,15 @@ In addition to polling timeout, subagent execution now has a built-in timeout me
 @dataclass
 class SubagentConfig:
     # ...
-    timeout_seconds: int = 300  # 5 minutes default
+    timeout_seconds: int = 900  # 15 minutes default
 ```
 
-**Thread Pool Architecture**:
+**Execution Architecture**:
 
-To avoid nested thread pools and resource waste, we use two dedicated thread pools:
-
-1. **Scheduler Pool** (`_scheduler_pool`):
-   - Max workers: 4
-   - Purpose: Orchestrates background task execution
-   - Runs `run_task()` function that manages task lifecycle
-
-2. **Execution Pool** (`_execution_pool`):
-   - Max workers: 8 (larger to avoid blocking)
-   - Purpose: Actual subagent execution with timeout support
-   - Runs `execute()` method that invokes the agent
+The scheduler pool has six host workers, matching the supported configuration
+ceiling. Before a task changes from `PENDING` to `RUNNING`, a process-wide
+capacity gate acquires one of the configured execution slots (four by default).
+Actual agent coroutines run on one persistent isolated asyncio loop.
 
 **How it works**:
 ```python
@@ -121,19 +114,20 @@ To avoid nested thread pools and resource waste, we use two dedicated thread poo
 _scheduler_pool.submit(run_task)  # Submit orchestration task
 
 # In run_task():
-future = _execution_pool.submit(self.execute, task)  # Submit execution
-exec_result = future.result(timeout=timeout_seconds)  # Wait with timeout
+_process_capacity_gate.acquire(process_limit, cancel_event)
+future = _submit_to_isolated_loop_in_context(context, execute_coroutine)
+exec_result = future.result(timeout=timeout_seconds)
 ```
 
 **Benefits**:
-- ✅ Clean separation of concerns (scheduling vs execution)
-- ✅ No nested thread pools
+- ✅ Per-response and process-wide concurrency are independent
+- ✅ No per-task event-loop or execution-pool creation
 - ✅ Timeout enforcement at the right level
 - ✅ Better resource utilization
 
 **Two-Level Timeout Protection**:
-1. **Execution Timeout**: Subagent execution itself has a 5-minute timeout (configurable in SubagentConfig)
-2. **Polling Timeout**: Tool polling has a 5-minute timeout (30 polls × 10 seconds)
+1. **Execution Timeout**: each subagent uses its resolved configurable timeout
+2. **Polling Timeout**: polling uses the resolved execution timeout plus a 60-second buffer
 
 This ensures that even if subagent execution hangs, the system won't wait indefinitely.
 

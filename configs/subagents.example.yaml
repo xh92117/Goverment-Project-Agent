@@ -6,6 +6,11 @@
 subagents:
   enabled: true
   max_concurrent_subagents: 3
+  max_process_concurrent_subagents: 4
+  tool_call_limits:
+    web_search: 2
+    web_fetch: 3
+    web_extract: 1
   max_turns: 8
   timeout_seconds: 300
 

@@ -37,13 +37,40 @@ def test_government_project_skills_keep_required_runtime_tools_available():
         "grep",
         "knowledge_search_index",
         "knowledge_read_file",
+        "knowledge_search_evidence",
+        "knowledge_read_evidence",
+        "knowledge_list_images",
         "knowledge_incremental_update",
         "proposal_save_markdown",
+        "present_files",
+        "view_image",
+        "update_agent",
         "web_search",
         "web_fetch",
         "web_extract",
         "task",
     } <= allowed_union
+
+
+def test_custom_subagent_tools_survive_their_skill_policy():
+    data = yaml.safe_load((REPO_ROOT / "config.example.yaml").read_text(encoding="utf-8"))
+    skills_root = REPO_ROOT / "skills" / "public"
+
+    for agent_name, agent_config in data["subagents"]["custom_agents"].items():
+        configured_tools = agent_config.get("tools") or []
+        assert len(configured_tools) == len(set(configured_tools)), f"{agent_name} declares duplicate tools"
+
+        allowed_tools: set[str] = set()
+        for skill_name in agent_config.get("skills") or []:
+            skill = parse_skill_file(skills_root / skill_name / "SKILL.md", SkillCategory.PUBLIC)
+            assert skill is not None, f"{agent_name} references missing skill {skill_name}"
+            assert skill.allowed_tools is not None
+            allowed_tools.update(skill.allowed_tools)
+
+        assert set(configured_tools) <= allowed_tools, (
+            f"{agent_name} tools removed by skill allowed-tools policy: "
+            f"{sorted(set(configured_tools) - allowed_tools)}"
+        )
 
 
 def test_government_project_agent_template_enables_web_tool_group():
@@ -158,8 +185,11 @@ def test_government_project_runtime_prompt_parallelizes_complex_research_tasks()
     assert "Complex declaration research tasks are decomposable by default" in prompt
     assert "research-status reviews, literature reviews" in prompt
     assert "decompose -> delegate" in prompt
-    assert "Launch 2-3 focused `task` calls in parallel" in prompt
-    assert "before any lead-agent `web_search`, `web_fetch`, or" in prompt
+    assert "Launch one focused initial batch" in prompt
+    assert "prefer 2-3 when the evidence domains genuinely differ" in prompt
+    assert "Do not launch ordinary second or later batches" in prompt
+    assert "parallel `task` calls before any" in prompt
+    assert "lead-agent `web_search`, `web_fetch`, or `web_extract` call" in prompt
     assert "mandatory for government-project research-status" in prompt
     assert "partially succeeds" in prompt
     assert "at most one additional gap-filling `task`" in prompt
@@ -167,3 +197,19 @@ def test_government_project_runtime_prompt_parallelizes_complex_research_tasks()
     assert "standards-patent-researcher" in prompt
     assert "at most 2 `web_search` calls" in prompt
     assert "Avoid repeated lead-agent" in prompt
+
+
+def test_government_subagent_prompt_uses_enforced_tool_limits():
+    from types import SimpleNamespace
+
+    from deerflow.agents.lead_agent.prompt import _build_government_subagent_section
+    from deerflow.config.subagents_config import SubagentsAppConfig
+
+    app_config = SimpleNamespace(
+        subagents=SubagentsAppConfig(tool_call_limits={"web_search": 1, "web_fetch": 4})
+    )
+
+    prompt = _build_government_subagent_section(3, app_config=app_config)
+
+    assert "at most 1 `web_search`, 4 `web_fetch` calls per delegated task" in prompt
+    assert "`web_extract`" not in prompt

@@ -211,6 +211,21 @@ def test_skill_tool_policy_warns_when_declared_tools_are_not_bound(caplog):
     assert "not present in current binding" in caplog.text
 
 
+def test_skill_tool_policy_can_suppress_expected_narrow_allowlist_warning(caplog):
+    from deerflow.skills.tool_policy import filter_tools_by_skill_allowed_tools
+
+    caplog.set_level("WARNING", logger="deerflow.skills.tool_policy")
+
+    filtered = filter_tools_by_skill_allowed_tools(
+        [NamedTool("read_file")],
+        [_make_skill("restricted", ["read_file", "web_extract"])],
+        warn_on_missing=False,
+    )
+
+    assert [tool.name for tool in filtered] == ["read_file"]
+    assert "not present in current binding" not in caplog.text
+
+
 def test_make_lead_agent_all_legacy_skills_preserve_all_tools(monkeypatch):
     from unittest.mock import MagicMock
 

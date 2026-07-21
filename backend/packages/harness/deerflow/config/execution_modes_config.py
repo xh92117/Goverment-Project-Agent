@@ -21,7 +21,7 @@ class ExecutionModeBudgetConfig(BaseModel):
     recursion_limit: int | None = Field(
         default=None,
         ge=1,
-        description="Minimum LangGraph recursion limit for this execution mode.",
+        description="Hard LangGraph recursion limit for this execution mode.",
     )
     subagent_enabled: bool | None = Field(
         default=None,
@@ -31,7 +31,7 @@ class ExecutionModeBudgetConfig(BaseModel):
         default=None,
         ge=1,
         le=6,
-        description="Minimum concurrent subagent limit for this execution mode.",
+        description="Hard limit for task calls in one lead-agent model response for this execution mode.",
     )
     subagent_min_turns: int | None = Field(
         default=None,
