@@ -123,6 +123,12 @@ src/
   LLM-Wiki index files.
 - Proposal drafts are stored as Markdown artifacts and surfaced in the draft
   management page.
+- Both project-creation entry points require an explicit workspace-directory
+  choice. The default option lets the backend allocate the per-user project
+  directory; the custom option uses the pre-create native folder selector and
+  sends its `root_path` with the create request. Native selection starts with a
+  short POST and polls the returned selection ID, avoiding a long-lived
+  Next.js proxy request while the user interacts with the Windows dialog.
 
 ## License
 

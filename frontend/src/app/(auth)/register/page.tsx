@@ -52,7 +52,7 @@ export default function RegisterPage() {
       <AuthPageShell
         eyebrow="加入工作空间"
         title="创建个人账号"
-        description="注册后将自动建立独立的数据与记忆空间。"
+        description="每个账号拥有独立的数据空间。"
       >
         <form className="auth-form" onSubmit={(event) => void submit(event)}>
           <label className="auth-field" htmlFor="register-email">

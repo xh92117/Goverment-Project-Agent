@@ -39,19 +39,16 @@ import { createId } from "@/shared/lib/ids";
 const quickPrompts = [
   {
     title: "检索政策指南",
-    desc: "查找申报指南、管理办法和截止时间",
     prompt: "请帮我检索并总结当前项目相关的申报政策指南，重点列出申报条件、材料清单和时间节点。",
     icon: BookOpenIcon,
   },
   {
     title: "撰写申报章节",
-    desc: "生成立项依据、技术路线、创新点",
     prompt: "请帮我撰写申报书中的立项依据和技术路线，要求结构清晰、语言正式。",
     icon: FileTextIcon,
   },
   {
     title: "配置智能体",
-    desc: "检查模型、技能、MCP 是否可用",
     prompt: "请检查当前申报助手配置是否完整，并说明需要补充哪些模型、技能或 MCP 服务。",
     icon: Settings2Icon,
   },
@@ -239,7 +236,6 @@ export function ChatPage() {
       <header className="main-head">
         <div>
           <div className="mh-title">智策对话</div>
-          <div className="mh-breadcrumb">项目申报 / 智能体协作</div>
         </div>
         <div className="mh-right">
           {headerTags.map((tag) => (
@@ -259,7 +255,6 @@ export function ChatPage() {
           <div className="welcome-panel">
             <div className="welcome-emblem">策</div>
             <h1>开启新的项目申报协作</h1>
-            <p>直接描述申报需求，或选择一个快捷入口。系统会创建线程并进入流式对话。</p>
             <div className="quick-grid">
               {quickPrompts.map((card) => {
                 const Icon = card.icon;
@@ -272,7 +267,6 @@ export function ChatPage() {
                   >
                     <Icon className="qc-icon" size={22} />
                     <div className="qc-title">{card.title}</div>
-                    <div className="qc-desc">{card.desc}</div>
                   </button>
                 );
               })}
@@ -293,7 +287,7 @@ export function ChatPage() {
             <textarea
               value={input}
               rows={2}
-              placeholder="输入消息，与智策助手协作推进项目..."
+              placeholder="输入申报问题…"
               onChange={(event) => setInput(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey) {

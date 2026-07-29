@@ -205,7 +205,7 @@ function AssistantMessage({
               <MarkdownRenderer content={assistant.content} isStreaming={isStreaming} onCopied={onCopied} />
             ) : (
               <span className="stream-placeholder">
-                {isStreaming ? "正在生成回答..." : "本次运行未生成最终回答。可以发送“继续”，或点击重新生成、缩小问题范围后重试。"}
+                {isStreaming ? "正在生成回答..." : "未生成完整回答，请继续或重新生成。"}
               </span>
             )}
           </div>

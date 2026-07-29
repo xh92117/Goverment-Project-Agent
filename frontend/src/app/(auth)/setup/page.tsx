@@ -52,7 +52,7 @@ export default function SetupPage() {
         admin
         eyebrow="首次部署 · 管理员设置"
         title="创建系统管理员"
-        description="此账号拥有系统配置权限，创建后即可进入工作台。"
+        description="创建首位管理员账号。"
       >
         <div className="auth-admin-notice">
           <ShieldCheckIcon aria-hidden="true" />

@@ -1,3 +1,5 @@
+import threading
+import time
 import zipfile
 from io import BytesIO
 
@@ -22,6 +24,25 @@ def _docx_document_xml(data: bytes) -> str:
         return archive.read("word/document.xml").decode("utf-8")
 
 
+def _finish_directory_selection(
+    client: TestClient,
+    started,
+    *,
+    timeout: float = 2.0,
+) -> dict[str, object]:
+    body = started.json()
+    deadline = time.monotonic() + timeout
+    while body["status"] == "pending" and time.monotonic() < deadline:
+        time.sleep(0.01)
+        polled = client.get(
+            f"/api/projects/directory/select/{body['selection_id']}",
+        )
+        assert polled.status_code == 200, polled.text
+        body = polled.json()
+    assert body["status"] != "pending", body
+    return body
+
+
 def test_create_and_list_projects(tmp_path, monkeypatch):
     with _client(tmp_path, monkeypatch) as client:
         created = client.post("/api/projects", json={"name": "2026 面上项目"})
@@ -33,6 +54,22 @@ def test_create_and_list_projects(tmp_path, monkeypatch):
     assert body["root_path"].endswith(body["project_id"])
     assert listed.status_code == 200, listed.text
     assert listed.json()[0]["project_id"] == body["project_id"]
+
+
+def test_create_project_accepts_custom_root_path(tmp_path, monkeypatch):
+    custom_root = tmp_path / "chosen-before-create"
+
+    with _client(tmp_path, monkeypatch) as client:
+        created = client.post(
+            "/api/projects",
+            json={"name": "创建前选目录", "root_path": str(custom_root)},
+        )
+
+    assert created.status_code == 200, created.text
+    assert created.json()["root_path"] == str(custom_root.resolve())
+    assert (custom_root / "inputs").is_dir()
+    assert (custom_root / "drafts").is_dir()
+    assert (custom_root / "outputs").is_dir()
 
 
 def test_project_directory_controls_project_file_root(tmp_path, monkeypatch):
@@ -76,13 +113,15 @@ def test_project_directory_select_returns_chosen_path(tmp_path, monkeypatch):
 
     with _client(tmp_path, monkeypatch) as client:
         project = client.post("/api/projects", json={"name": "选择目录项目"}).json()
-        selected = client.post(f"/api/projects/{project['project_id']}/directory/select")
+        started = client.post(
+            f"/api/projects/{project['project_id']}/directory/select",
+        )
+        selected = _finish_directory_selection(client, started)
 
-    assert selected.status_code == 200, selected.text
-    body = selected.json()
-    assert body["selected"] is True
-    assert body["project_id"] == project["project_id"]
-    assert body["root_path"] == str(selected_root.resolve())
+    assert selected["status"] == "selected"
+    assert selected["selected"] is True
+    assert selected["project_id"] == project["project_id"]
+    assert selected["root_path"] == str(selected_root.resolve())
 
 
 def test_project_directory_select_supports_cancel(tmp_path, monkeypatch):
@@ -90,10 +129,90 @@ def test_project_directory_select_supports_cancel(tmp_path, monkeypatch):
 
     with _client(tmp_path, monkeypatch) as client:
         project = client.post("/api/projects", json={"name": "取消选择目录项目"}).json()
-        selected = client.post(f"/api/projects/{project['project_id']}/directory/select")
+        started = client.post(
+            f"/api/projects/{project['project_id']}/directory/select",
+        )
+        selected = _finish_directory_selection(client, started)
 
-    assert selected.status_code == 200, selected.text
-    assert selected.json() == {"project_id": project["project_id"], "root_path": None, "selected": False}
+    assert selected["status"] == "cancelled"
+    assert selected["project_id"] == project["project_id"]
+    assert selected["root_path"] is None
+    assert selected["selected"] is False
+
+
+def test_new_project_directory_select_returns_chosen_path(tmp_path, monkeypatch):
+    monkeypatch.setattr(projects, "government_project_workspace_root", lambda: tmp_path / "workspace")
+    selected_root = tmp_path / "picked-before-create"
+    selected_root.mkdir()
+    captured_initial: list[object] = []
+
+    def _select(initial_dir):
+        captured_initial.append(initial_dir)
+        return selected_root
+
+    monkeypatch.setattr(projects, "_select_project_directory", _select)
+
+    with _client(tmp_path, monkeypatch) as client:
+        started = client.post("/api/projects/directory/select", json={})
+        selected = _finish_directory_selection(client, started)
+
+    assert selected["status"] == "selected"
+    assert selected["root_path"] == str(selected_root.resolve())
+    assert selected["selected"] is True
+    assert captured_initial == [(tmp_path / "workspace").resolve()]
+
+
+def test_new_project_directory_select_supports_cancel(tmp_path, monkeypatch):
+    monkeypatch.setattr(projects, "_select_project_directory", lambda initial_dir: None)
+
+    with _client(tmp_path, monkeypatch) as client:
+        started = client.post("/api/projects/directory/select", json={})
+        selected = _finish_directory_selection(client, started)
+
+    assert selected["status"] == "cancelled"
+    assert selected["root_path"] is None
+    assert selected["selected"] is False
+
+
+def test_new_project_directory_select_returns_before_dialog_finishes(
+    tmp_path,
+    monkeypatch,
+):
+    release = threading.Event()
+
+    def _select(initial_dir):
+        release.wait(timeout=2)
+        return None
+
+    monkeypatch.setattr(projects, "_select_project_directory", _select)
+
+    with _client(tmp_path, monkeypatch) as client:
+        before = time.monotonic()
+        started = client.post("/api/projects/directory/select", json={})
+        elapsed = time.monotonic() - before
+
+        assert started.status_code == 200, started.text
+        assert started.json()["status"] == "pending"
+        assert elapsed < 0.5
+
+        release.set()
+        selected = _finish_directory_selection(client, started)
+
+    assert selected["status"] == "cancelled"
+
+
+def test_new_project_directory_select_reports_picker_errors(tmp_path, monkeypatch):
+    def _select(initial_dir):
+        raise OSError("picker failed")
+
+    monkeypatch.setattr(projects, "_select_project_directory", _select)
+
+    with _client(tmp_path, monkeypatch) as client:
+        started = client.post("/api/projects/directory/select", json={})
+        selected = _finish_directory_selection(client, started)
+
+    assert selected["status"] == "error"
+    assert selected["error"] == "picker failed"
 
 
 def test_project_draft_roundtrip_and_file_tree(tmp_path, monkeypatch):

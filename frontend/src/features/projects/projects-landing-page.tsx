@@ -11,32 +11,34 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { createProject, listProjects } from "@/features/projects/api";
+import {
+  isNewProjectDirectoryReady,
+  newProjectRootPath,
+} from "@/features/projects/new-project-directory";
+import type { NewProjectDirectoryMode } from "@/features/projects/new-project-directory";
+import { NewProjectDirectoryField } from "@/features/projects/new-project-directory-field";
 import { formatDateTime } from "@/shared/lib/format";
 
 const quickCards = [
   {
     title: "新建申报项目",
-    desc: "创建项目空间、材料目录和对话上下文",
     icon: FolderPlusIcon,
   },
   {
     title: "整理知识库",
-    desc: "上传政策文件，一键构建检索索引",
     icon: BookOpenIcon,
     href: "/workspace/knowledge",
   },
   {
     title: "配置智能体",
-    desc: "管理模型供应商、技能与 MCP",
     icon: Settings2Icon,
     href: "/workspace/settings",
   },
   {
     title: "草稿工作台",
-    desc: "查看和维护申报书章节草稿",
     icon: FileTextIcon,
     href: "/workspace/drafts",
   },
@@ -45,55 +47,88 @@ const quickCards = [
 export function ProjectsLandingPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
+  const [directoryMode, setDirectoryMode] =
+    useState<NewProjectDirectoryMode>(null);
+  const [rootPath, setRootPath] = useState("");
   const projects = useQuery({ queryKey: ["projects"], queryFn: listProjects });
+  const directoryReady = isNewProjectDirectoryReady(directoryMode, rootPath);
 
   const create = useMutation({
-    mutationFn: () =>
-      createProject({
+    mutationFn: () => {
+      if (!directoryReady) {
+        throw new Error("请先选择项目工作路径。");
+      }
+      return createProject({
         name: name.trim() || "未命名申报项目",
+        root_path: newProjectRootPath(directoryMode, rootPath),
         metadata: {
           workspace_layout: "codex-design",
           created_from: "web-project-entry",
         },
-      }),
+      });
+    },
     onSuccess: async (project) => {
       setName("");
+      setDirectoryMode(null);
+      setRootPath("");
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       router.push(`/workspace/projects/${encodeURIComponent(project.project_id)}`);
     },
   });
 
   return (
-    <main className="codex-main single">
+    <main className="codex-main single projects-landing-main">
       <header className="main-head">
         <div>
           <div className="mh-title">开始新的项目申报</div>
-          <div className="mh-breadcrumb">描述需求、创建空间，然后进入协作工作台</div>
         </div>
       </header>
 
       <div className="welcome-view">
         <div className="welcome-emblem">策</div>
         <h1>智策政府科研项目申报助手</h1>
-        <p>以项目为中心组织政策、材料、草稿和智能体对话，适合持续推进申报书撰写与材料校验。</p>
+        <p>项目集中管理材料、知识库、对话和草稿。</p>
 
         <form
-          className="project-create-box"
+          className="project-create-panel"
           onSubmit={(event) => {
             event.preventDefault();
             create.mutate();
           }}
         >
-          <input
-            value={name}
-            placeholder="输入项目名称，例如：2026年度重点研发计划申报"
-            onChange={(event) => setName(event.target.value)}
+          <div className="project-create-box">
+            <input
+              ref={nameInputRef}
+              value={name}
+              placeholder="输入项目名称，例如：2026年度重点研发计划申报"
+              onChange={(event) => setName(event.target.value)}
+            />
+            <button
+              type="submit"
+              disabled={create.isPending || !directoryReady}
+            >
+              <PlusIcon size={16} />
+              {create.isPending ? "创建中" : "创建项目"}
+            </button>
+          </div>
+          <NewProjectDirectoryField
+            mode={directoryMode}
+            rootPath={rootPath}
+            disabled={create.isPending}
+            onChange={(mode, selectedRootPath) => {
+              setDirectoryMode(mode);
+              setRootPath(selectedRootPath);
+            }}
           />
-          <button type="submit" disabled={create.isPending}>
-            <PlusIcon size={16} />
-            {create.isPending ? "创建中" : "创建项目"}
-          </button>
+          {create.isError ? (
+            <p className="modal-error">
+              {create.error instanceof Error
+                ? create.error.message
+                : "创建失败，请稍后重试。"}
+            </p>
+          ) : null}
         </form>
 
         <div className="quick-grid">
@@ -103,7 +138,6 @@ export function ProjectsLandingPage() {
               <>
                 <Icon className="qc-icon" size={22} />
                 <div className="qc-title">{card.title}</div>
-                <div className="qc-desc">{card.desc}</div>
               </>
             );
             return card.href ? (
@@ -111,7 +145,18 @@ export function ProjectsLandingPage() {
                 {content}
               </Link>
             ) : (
-              <button key={card.title} type="button" className="quick-card" onClick={() => create.mutate()}>
+              <button
+                key={card.title}
+                type="button"
+                className="quick-card"
+                onClick={() => {
+                  nameInputRef.current?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "center",
+                  });
+                  nameInputRef.current?.focus();
+                }}
+              >
                 {content}
               </button>
             );

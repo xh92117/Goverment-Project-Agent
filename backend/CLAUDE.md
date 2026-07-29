@@ -179,6 +179,20 @@ override the server-stamped identity or route `thread_id`.
   and audit JSONL files live in `users/{user_id}/logs/` and must not contain
   request bodies, credentials, or another tenant's identifiers.
 
+### Project workspace directories
+
+- `POST /api/projects` accepts an optional `root_path`. Omitting it preserves
+  the per-user default project directory; supplying it creates the standard
+  `inputs`, `drafts`, `outputs`, `versions`, and `files` subdirectories there.
+- `POST /api/projects/directory/select` starts the native directory picker
+  before a project record exists and immediately returns a selection ID.
+  `GET /api/projects/directory/select/{selection_id}` reports pending,
+  selected, cancelled, or error state so the frontend never holds a proxy
+  request open while the Windows dialog is active. The dialog uses a topmost
+  invisible owner to remain visible when the launcher is backgrounded.
+  Successful paths pass through the same source-tree and strict-user-context
+  validation used by the existing project directory endpoints.
+
 Migration behavior is implemented in `scripts/migrate_user_isolation.py` and
 documented in `../docs/MULTI_USER_ISOLATION.md`. Add isolation tests whenever a
 new file store, cache, background queue, session pool, or resource ID is added.

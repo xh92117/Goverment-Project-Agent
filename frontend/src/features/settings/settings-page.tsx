@@ -316,9 +316,6 @@ export function SettingsPage() {
       <header className="main-head">
         <div>
           <div className="mh-title">设置</div>
-          <div className="mh-breadcrumb">
-            模型、存储、技能、MCP、记忆与通道配置
-          </div>
         </div>
       </header>
 

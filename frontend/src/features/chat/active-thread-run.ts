@@ -214,7 +214,7 @@ export function startThreadRun({
           ? message
           : {
               ...message,
-              content: "本次运行未生成最终回答。可以发送“继续”，或点击重新生成、缩小问题范围后重试。",
+              content: "未生成完整回答，请继续或重新生成。",
             },
       );
       current.status = "success";

@@ -15,7 +15,7 @@ export function AuthPageShell({
 }: Readonly<{
   eyebrow: string;
   title: string;
-  description: string;
+  description?: string;
   children: ReactNode;
   admin?: boolean;
 }>) {
@@ -46,26 +46,21 @@ export function AuthPageShell({
             AI 驱动的申报协作空间
           </div>
           <h1>{admin ? "从安全的管理员账号开始" : "让每一次申报，更有依据"}</h1>
-          <p>
-            {admin
-              ? "创建首位管理员后，系统将按登录账号隔离项目文件、对话、缓存、日志与个人知识内容。"
-              : "政策检索、材料组织、知识沉淀与申报写作在同一个工作台内有序协同。"}
-          </p>
+          {admin ? (
+            <p>创建首位管理员后，项目文件、对话和个人知识将按账号隔离。</p>
+          ) : null}
           <div className="auth-capabilities">
             <div>
               <span><UsersIcon aria-hidden="true" /></span>
               <strong>账号空间隔离</strong>
-              <small>用户数据按账号边界独立保存</small>
             </div>
             <div>
               <span><DatabaseIcon aria-hidden="true" /></span>
               <strong>双层知识体系</strong>
-              <small>公共知识与个人知识彼此独立</small>
             </div>
             <div>
               <span><ShieldCheckIcon aria-hidden="true" /></span>
               <strong>会话安全保护</strong>
-              <small>HttpOnly Cookie 与请求校验</small>
             </div>
           </div>
         </section>
@@ -74,7 +69,7 @@ export function AuthPageShell({
           <div className="auth-panel-heading">
             <span>{eyebrow}</span>
             <h2>{title}</h2>
-            <p>{description}</p>
+            {description ? <p>{description}</p> : null}
           </div>
           {children}
         </section>
@@ -82,7 +77,6 @@ export function AuthPageShell({
 
       <footer className="auth-footer">
         <span>© 2026 智策 · GovDecl</span>
-        <span>数据边界清晰 · 操作全程可追溯</span>
       </footer>
     </main>
   );

@@ -44,7 +44,6 @@ function LoginForm() {
       <AuthPageShell
         eyebrow="欢迎回来"
         title="登录工作台"
-        description="使用你的账号继续项目申报工作。"
       >
         <form className="auth-form" onSubmit={(event) => void submit(event)}>
           <label className="auth-field" htmlFor="login-email">
