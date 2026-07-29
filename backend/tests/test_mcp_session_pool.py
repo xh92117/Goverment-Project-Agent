@@ -427,6 +427,20 @@ async def test_session_pool_tool_extracts_thread_id():
     assert ("server", "from-config") in pool._entries
 
 
+def test_mcp_session_scope_includes_user_id():
+    """Two tenants using the same thread ID must not share MCP server state."""
+    from deerflow.mcp.tools import _extract_session_scope
+
+    runtime_a = MagicMock()
+    runtime_a.context = {"user_id": "alice", "thread_id": "same-thread"}
+    runtime_a.config = {}
+    runtime_b = MagicMock()
+    runtime_b.context = {"user_id": "bob", "thread_id": "same-thread"}
+    runtime_b.config = {}
+
+    assert _extract_session_scope(runtime_a) != _extract_session_scope(runtime_b)
+
+
 @pytest.mark.asyncio
 async def test_session_pool_tool_default_scope():
     """When no thread_id is available, 'default' is used as scope key."""

@@ -118,12 +118,9 @@ def _index_versions_dir(*, user_id: str | None = None) -> Path:
 
 
 def _knowledge_root_path(*, user_id: str | None = None) -> Path:
-    workspace_root = government_project_knowledge_root()
-    if workspace_root.exists():
-        return workspace_root
     if user_id:
         return (get_paths().user_dir(user_id) / "knowledge_base").resolve()
-    return (get_paths().base_dir / "knowledge_base").resolve()
+    return government_project_knowledge_root().resolve()
 
 
 def _metadata_value_matches(actual: Any, expected: Any) -> bool:
@@ -769,6 +766,30 @@ def search_knowledge_documents(
     return KnowledgeSearchResponse(results=limited, count=len(limited))
 
 
+def search_knowledge_documents_combined(
+    request: KnowledgeSearchRequest,
+    *,
+    user_id: str,
+) -> KnowledgeSearchResponse:
+    """Return public documents plus only the caller's private documents."""
+    private_response = search_knowledge_documents(request, user_id=user_id)
+    if _knowledge_root_path(user_id=user_id) == _knowledge_root_path(user_id=None):
+        return private_response
+    public_response = search_knowledge_documents(request, user_id=None)
+    combined = [result.model_copy(update={"scope": "private"}) for result in private_response.results]
+    combined.extend(result.model_copy(update={"scope": "public"}) for result in public_response.results)
+    combined.sort(
+        key=lambda result: (
+            result.score,
+            result.scope == "private",
+            result.document.updated_at,
+        ),
+        reverse=True,
+    )
+    limited = combined[: request.limit]
+    return KnowledgeSearchResponse(results=limited, count=len(limited))
+
+
 def list_knowledge_index_entries(
     *,
     user_id: str | None = None,
@@ -1016,6 +1037,42 @@ def search_knowledge_index_entries(
     return KnowledgeIndexSearchResponse(results=limited, count=len(limited))
 
 
+def search_knowledge_index_entries_combined(
+    request: KnowledgeIndexSearchRequest,
+    *,
+    user_id: str,
+) -> KnowledgeIndexSearchResponse:
+    """Search the caller's private library and the server public library.
+
+    Each underlying search applies the same filters and score normalization.
+    Results retain their source scope so a subsequent read can resolve the
+    relative file path against the correct physical root.
+    """
+    private_response = search_knowledge_index_entries(request, user_id=user_id)
+    if _knowledge_root_path(user_id=user_id) == _knowledge_root_path(user_id=None):
+        return private_response
+    public_response = search_knowledge_index_entries(request, user_id=None)
+    combined = [
+        result.model_copy(update={"scope": "private"})
+        for result in private_response.results
+    ]
+    combined.extend(
+        result.model_copy(update={"scope": "public"})
+        for result in public_response.results
+    )
+    combined.sort(
+        key=lambda result: (
+            result.score,
+            result.scope == "private",
+            result.entry.confidence,
+            result.entry.updated_at,
+        ),
+        reverse=True,
+    )
+    limited = combined[: request.limit]
+    return KnowledgeIndexSearchResponse(results=limited, count=len(limited))
+
+
 def _entry_matches_recall_case(entry: KnowledgeIndexEntry, case: KnowledgeRecallEvalCase) -> bool:
     expected_paths = {Path(path).as_posix() for path in case.expected_file_paths}
     candidate_paths = {
@@ -1125,6 +1182,25 @@ def read_knowledge_file(request: KnowledgeFileReadRequest, *, user_id: str | Non
         content=content,
         truncated=truncated,
     )
+
+
+def read_knowledge_file_combined(
+    request: KnowledgeFileReadRequest,
+    *,
+    user_id: str,
+    scope: str = "auto",
+) -> KnowledgeFileReadResponse:
+    """Read from a selected scope, or prefer private then fall back to public."""
+    if scope not in {"auto", "private", "public"}:
+        raise ValueError("scope must be one of: auto, private, public")
+    if scope == "public":
+        return read_knowledge_file(request, user_id=None).model_copy(update={"scope": "public"})
+    if scope == "private":
+        return read_knowledge_file(request, user_id=user_id).model_copy(update={"scope": "private"})
+    try:
+        return read_knowledge_file(request, user_id=user_id).model_copy(update={"scope": "private"})
+    except FileNotFoundError:
+        return read_knowledge_file(request, user_id=None).model_copy(update={"scope": "public"})
 
 
 def save_knowledge_file(request: KnowledgeFileSaveRequest, *, user_id: str | None = None) -> KnowledgeFileSaveResponse:

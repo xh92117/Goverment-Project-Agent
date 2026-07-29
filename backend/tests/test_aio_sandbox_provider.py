@@ -56,6 +56,29 @@ def _make_provider(tmp_path):
     return provider
 
 
+def test_deterministic_sandbox_id_is_tenant_scoped_in_strict_mode(tmp_path, monkeypatch):
+    """The same public thread ID must not resolve to one shared container."""
+    provider = _make_provider(tmp_path)
+    monkeypatch.setenv("AGENT_BASE_STRICT_USER_CONTEXT", "true")
+
+    token = set_current_user(SimpleNamespace(id="tenant-a"))
+    try:
+        sandbox_a = provider._sandbox_id_for_thread("shared-thread")
+        scope_a = provider._thread_scope_key("shared-thread")
+    finally:
+        reset_current_user(token)
+
+    token = set_current_user(SimpleNamespace(id="tenant-b"))
+    try:
+        sandbox_b = provider._sandbox_id_for_thread("shared-thread")
+        scope_b = provider._thread_scope_key("shared-thread")
+    finally:
+        reset_current_user(token)
+
+    assert sandbox_a != sandbox_b
+    assert scope_a != scope_b
+
+
 def test_get_thread_mounts_includes_acp_workspace(tmp_path, monkeypatch):
     """_get_thread_mounts must include /mnt/acp-workspace (read-only) for docker sandbox."""
     aio_mod = importlib.import_module("deerflow.community.aio_sandbox.aio_sandbox_provider")

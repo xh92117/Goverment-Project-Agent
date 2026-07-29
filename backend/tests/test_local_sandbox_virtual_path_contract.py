@@ -180,6 +180,45 @@ def test_per_thread_user_data_mapping_isolated(provider, isolated_paths):
         sbx_b.read_file("/mnt/user-data/workspace/secret.txt")
 
 
+def test_same_thread_id_is_isolated_between_users_in_strict_mode(provider, monkeypatch):
+    """A process-wide provider cache must never reuse another tenant's sandbox."""
+    from deerflow.config.paths import get_paths
+    from deerflow.runtime.user_context import reset_current_user, set_current_user
+
+    monkeypatch.setenv("AGENT_BASE_STRICT_USER_CONTEXT", "true")
+
+    token = set_current_user(SimpleNamespace(id="tenant-a"))
+    try:
+        sid_a = provider.acquire("alpha")
+    finally:
+        reset_current_user(token)
+
+    token = set_current_user(SimpleNamespace(id="tenant-b"))
+    try:
+        sid_b = provider.acquire("alpha")
+    finally:
+        reset_current_user(token)
+
+    assert sid_a != sid_b
+    sandbox_a = provider.get(sid_a)
+    sandbox_b = provider.get(sid_b)
+    assert sandbox_a is not sandbox_b
+
+    workspace_a = next(
+        mapping.local_path
+        for mapping in sandbox_a.path_mappings
+        if mapping.container_path == "/mnt/user-data/workspace"
+    )
+    workspace_b = next(
+        mapping.local_path
+        for mapping in sandbox_b.path_mappings
+        if mapping.container_path == "/mnt/user-data/workspace"
+    )
+    paths = get_paths()
+    assert Path(workspace_a) == paths.sandbox_work_dir("alpha", user_id="tenant-a")
+    assert Path(workspace_b) == paths.sandbox_work_dir("alpha", user_id="tenant-b")
+
+
 def test_agent_written_paths_per_thread_isolation(provider):
     """``_agent_written_paths`` tracks files this sandbox wrote so reverse-resolve
     runs on read. The set must not leak across threads."""

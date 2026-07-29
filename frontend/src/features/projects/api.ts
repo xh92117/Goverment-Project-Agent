@@ -62,6 +62,35 @@ export interface ProjectDraftVersion {
   size: number;
 }
 
+interface ProjectDirectorySelection {
+  selection_id: string;
+  status: "pending" | "selected" | "cancelled" | "error";
+  project_id?: string | null;
+  root_path?: string | null;
+  selected: boolean;
+  error?: string | null;
+}
+
+const DIRECTORY_SELECTION_POLL_MS = 300;
+
+async function waitForProjectDirectorySelection(
+  selection: ProjectDirectorySelection,
+) {
+  let current = selection;
+  while (current.status === "pending") {
+    await new Promise((resolve) =>
+      setTimeout(resolve, DIRECTORY_SELECTION_POLL_MS),
+    );
+    current = await apiJson<ProjectDirectorySelection>(
+      `/api/projects/directory/select/${encodeURIComponent(current.selection_id)}`,
+    );
+  }
+  if (current.status === "error") {
+    throw new Error(current.error ?? "无法打开文件夹选择器，请稍后重试。");
+  }
+  return current;
+}
+
 export function listProjects() {
   return apiJson<ProjectRecord[]>("/api/projects");
 }
@@ -69,6 +98,7 @@ export function listProjects() {
 export function createProject(input: {
   name: string;
   type?: string;
+  root_path?: string | null;
   metadata?: Record<string, unknown>;
 }) {
   return apiJson<ProjectRecord>("/api/projects", {
@@ -76,6 +106,7 @@ export function createProject(input: {
     body: jsonBody({
       name: input.name,
       type: input.type ?? "government-project-declaration",
+      root_path: input.root_path ?? null,
       metadata: input.metadata ?? {},
     }),
   });
@@ -109,14 +140,28 @@ export function updateProjectDirectory(
   );
 }
 
-export function selectProjectDirectory(projectId: string) {
-  return apiJson<{
-    project_id: string;
-    root_path?: string | null;
-    selected: boolean;
-  }>(`/api/projects/${encodeURIComponent(projectId)}/directory/select`, {
-    method: "POST",
-  });
+export async function selectProjectDirectory(projectId: string) {
+  const selection = await apiJson<ProjectDirectorySelection>(
+    `/api/projects/${encodeURIComponent(projectId)}/directory/select`,
+    {
+      method: "POST",
+    },
+  );
+  return waitForProjectDirectorySelection(selection);
+}
+
+export async function selectNewProjectDirectory(initialPath?: string | null) {
+  const normalizedInitialPath = initialPath?.trim();
+  const selection = await apiJson<ProjectDirectorySelection>(
+    "/api/projects/directory/select",
+    {
+      method: "POST",
+      body: jsonBody({
+        initial_path: normalizedInitialPath ?? null,
+      }),
+    },
+  );
+  return waitForProjectDirectorySelection(selection);
 }
 
 export function openProjectDirectory(projectId: string) {

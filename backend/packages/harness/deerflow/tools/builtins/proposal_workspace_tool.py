@@ -13,8 +13,8 @@ from langchain.tools import InjectedToolCallId, tool
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
 
-from deerflow.config.paths import VIRTUAL_PATH_PREFIX
-from deerflow.government_project_workspace import government_project_drafts_root, government_project_projects_root
+from deerflow.config.paths import VIRTUAL_PATH_PREFIX, get_paths
+from deerflow.runtime.user_context import resolve_runtime_user_id, strict_user_context_enabled
 from deerflow.tools.types import Runtime
 
 _SAFE_NAME_RE = re.compile(r"[^0-9A-Za-z\u4e00-\u9fff._-]+")
@@ -23,8 +23,9 @@ _THREAD_PROJECT_MARKER = ".thread_project.json"
 _PROJECT_META_FILE = ".project.json"
 
 
-def _proposal_workspace_root() -> Path:
-    return government_project_drafts_root()
+def _proposal_workspace_root(runtime: Runtime) -> Path:
+    """Return the current runtime user's private legacy-drafts root."""
+    return get_paths().user_drafts_dir(resolve_runtime_user_id(runtime)).resolve()
 
 
 def _safe_name(value: str, fallback: str) -> str:
@@ -49,11 +50,12 @@ def _extract_project_context(runtime: Runtime) -> tuple[str, str] | None:
     return _safe_thread_id(project_id), _safe_name(name, "default-proposal")
 
 
-def _project_meta_dir(project_id: str) -> Path:
-    return (government_project_projects_root() / project_id).resolve()
+def _project_meta_dir(project_id: str, runtime: Runtime) -> Path:
+    user_id = resolve_runtime_user_id(runtime)
+    return (get_paths().user_projects_dir(user_id) / project_id).resolve()
 
 
-def _project_root_from_metadata(meta_dir: Path) -> Path:
+def _project_root_from_metadata(meta_dir: Path, runtime: Runtime) -> Path:
     meta_path = meta_dir / _PROJECT_META_FILE
     if not meta_path.exists():
         return meta_dir
@@ -65,11 +67,24 @@ def _project_root_from_metadata(meta_dir: Path) -> Path:
         return meta_dir
     root_path = data.get("root_path")
     if isinstance(root_path, str) and root_path.strip():
-        return Path(root_path).expanduser().resolve()
+        resolved = Path(root_path).expanduser().resolve()
+        if strict_user_context_enabled():
+            user_root = get_paths().user_dir(resolve_runtime_user_id(runtime)).resolve()
+            try:
+                resolved.relative_to(user_root)
+            except ValueError:
+                return meta_dir
+        return resolved
     return meta_dir
 
 
-def _ensure_project_metadata(meta_dir: Path, project_root: Path, project_id: str, project_name: str) -> None:
+def _ensure_project_metadata(
+    meta_dir: Path,
+    project_root: Path,
+    project_id: str,
+    project_name: str,
+    owner_id: str,
+) -> None:
     meta_dir.mkdir(parents=True, exist_ok=True)
     meta_path = meta_dir / _PROJECT_META_FILE
     if meta_path.exists():
@@ -86,6 +101,7 @@ def _ensure_project_metadata(meta_dir: Path, project_root: Path, project_id: str
                 "created_at": now,
                 "updated_at": now,
                 "metadata": {},
+                "owner_id": owner_id,
             },
             ensure_ascii=False,
             indent=2,
@@ -200,10 +216,11 @@ def _save_project_scoped_markdown(
         return None
 
     project_id, project_name = project_context
+    user_id = resolve_runtime_user_id(runtime)
     thread_data = (runtime.state or {}).get("thread_data") or {}
     outputs_path = thread_data.get("outputs_path")
-    meta_dir = _project_meta_dir(project_id)
-    project_root = _project_root_from_metadata(meta_dir)
+    meta_dir = _project_meta_dir(project_id, runtime)
+    project_root = _project_root_from_metadata(meta_dir, runtime)
     drafts_root = (project_root / "drafts").resolve()
     subfolder = _safe_relative_dir(subfolder_name)
     filename = _ensure_markdown_filename(section_name)
@@ -218,7 +235,7 @@ def _save_project_scoped_markdown(
 
     for folder in ("inputs", "drafts", "outputs", "versions"):
         (project_root / folder).mkdir(parents=True, exist_ok=True)
-    _ensure_project_metadata(meta_dir, project_root, project_id, project_name)
+    _ensure_project_metadata(meta_dir, project_root, project_id, project_name, user_id)
     workspace_file.parent.mkdir(parents=True, exist_ok=True)
     workspace_file.write_text(content, encoding="utf-8")
 
@@ -298,7 +315,7 @@ def proposal_save_markdown_tool(
 
     thread_data = (runtime.state or {}).get("thread_data") or {}
     outputs_path = thread_data.get("outputs_path")
-    workspace_root = _proposal_workspace_root()
+    workspace_root = _proposal_workspace_root(runtime)
     task_dir_name, default_subfolder = _project_scope(workspace_root, runtime, task_name)
     subfolder = _safe_relative_dir(subfolder_name or default_subfolder)
     filename = _ensure_markdown_filename(section_name)

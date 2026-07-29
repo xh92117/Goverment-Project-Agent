@@ -416,11 +416,12 @@ async def test_feedback_cross_user_delete_denied(tmp_path):
 
 @pytest.mark.anyio
 @pytest.mark.no_auto_user
-async def test_repository_without_context_raises(tmp_path):
+async def test_repository_without_context_raises(tmp_path, monkeypatch):
     """Defense-in-depth: calling repo methods without a user context errors."""
     from deerflow.persistence.engine import get_session_factory
     from deerflow.persistence.thread_meta import ThreadMetaRepository
 
+    monkeypatch.setenv("AGENT_BASE_STRICT_USER_CONTEXT", "true")
     cleanup = await _make_engines(tmp_path)
     try:
         repo = ThreadMetaRepository(get_session_factory())

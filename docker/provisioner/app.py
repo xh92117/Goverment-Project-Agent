@@ -97,6 +97,21 @@ def join_host_path(base: str, *parts: str) -> str:
     return str(result)
 
 
+def _sibling_users_host_path(threads_host_path: str) -> str:
+    """Derive the tenant root next to the legacy ``threads`` directory."""
+    if re.match(r"^[A-Za-z]:[\\/]", threads_host_path) or threads_host_path.startswith("\\\\") or "\\" in threads_host_path:
+        from pathlib import PureWindowsPath
+
+        return str(PureWindowsPath(threads_host_path).parent / "users")
+
+    from pathlib import Path
+
+    return str(Path(threads_host_path).parent / "users")
+
+
+USERS_HOST_PATH = os.environ.get("USERS_HOST_PATH", _sibling_users_host_path(THREADS_HOST_PATH))
+
+
 # ── K8s client setup ────────────────────────────────────────────────────
 
 core_v1: k8s_client.CoreV1Api | None = None
@@ -240,7 +255,7 @@ def _sandbox_url(node_port: int) -> str:
     return f"http://{NODE_HOST}:{node_port}"
 
 
-def _build_volumes(thread_id: str) -> list[k8s_client.V1Volume]:
+def _build_volumes(thread_id: str, user_id: str = DEFAULT_USER_ID) -> list[k8s_client.V1Volume]:
     """Build volume list: PVC when configured, otherwise hostPath."""
     if SKILLS_PVC_NAME:
         skills_vol = k8s_client.V1Volume(
@@ -270,7 +285,7 @@ def _build_volumes(thread_id: str) -> list[k8s_client.V1Volume]:
         userdata_vol = k8s_client.V1Volume(
             name="user-data",
             host_path=k8s_client.V1HostPathVolumeSource(
-                path=join_host_path(THREADS_HOST_PATH, thread_id, "user-data"),
+                path=join_host_path(USERS_HOST_PATH, user_id, "threads", thread_id, "user-data"),
                 type="DirectoryOrCreate",
             ),
         )
@@ -363,7 +378,7 @@ def _build_pod(sandbox_id: str, thread_id: str, user_id: str = DEFAULT_USER_ID) 
                     ),
                 )
             ],
-            volumes=_build_volumes(thread_id),
+            volumes=_build_volumes(thread_id, user_id=user_id),
             restart_policy="Always",
         ),
     )

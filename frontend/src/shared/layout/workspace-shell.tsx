@@ -21,11 +21,19 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { useEffect, useMemo, useState } from "react";
 
+import { WorkspaceAccount } from "@/features/auth/workspace-account";
 import { createThread, deleteThread, patchThread, searchThreads } from "@/features/chat/api";
 import type { ThreadRecord } from "@/features/chat/api";
 import { UNTITLED_DIRECT_THREAD_TITLE, UNTITLED_PROJECT_THREAD_TITLE } from "@/features/chat/thread-title";
 import { createProject, deleteProject, listProjects, patchProject } from "@/features/projects/api";
 import type { ProjectRecord } from "@/features/projects/api";
+import {
+  isNewProjectDirectoryReady,
+  newProjectRootPath as projectRootPathForCreate,
+} from "@/features/projects/new-project-directory";
+import type { NewProjectDirectoryMode } from "@/features/projects/new-project-directory";
+import { NewProjectDirectoryField } from "@/features/projects/new-project-directory-field";
+import { threadsWithoutAvailableProject } from "@/shared/layout/workspace-thread-groups";
 import { createId } from "@/shared/lib/ids";
 import { useThemeMode } from "@/shared/theme/use-theme";
 
@@ -248,6 +256,9 @@ export function WorkspaceShell({ children }: Readonly<{ children: React.ReactNod
   const [newChatOpen, setNewChatOpen] = useState(false);
   const [newChatMode, setNewChatMode] = useState<"project" | "direct">("project");
   const [newProjectName, setNewProjectName] = useState("");
+  const [newProjectDirectoryMode, setNewProjectDirectoryMode] =
+    useState<NewProjectDirectoryMode>(null);
+  const [newProjectRootPath, setNewProjectRootPath] = useState("");
 
   const activeProjectId = projectIdFromPath(pathname);
   const activeThreadId = threadIdFromPath(pathname) ?? searchParams.get("thread");
@@ -297,17 +308,39 @@ export function WorkspaceShell({ children }: Readonly<{ children: React.ReactNod
   }, [projects.data]);
 
   const looseThreads = useMemo(
-    () => (threads.data ?? []).filter((thread) => !metadataText(thread, "project_id")).slice(0, 8),
-    [threads.data],
+    () =>
+      threadsWithoutAvailableProject(threads.data ?? [], projects.data ?? []),
+    [projects.data, threads.data],
   );
+
+  const newProjectDirectoryReady = isNewProjectDirectoryReady(
+    newProjectDirectoryMode,
+    newProjectRootPath,
+  );
+  const createChatReady =
+    newChatMode === "direct" || newProjectDirectoryReady;
+
+  const closeNewChatModal = () => {
+    setNewChatOpen(false);
+    setNewProjectName("");
+    setNewProjectDirectoryMode(null);
+    setNewProjectRootPath("");
+  };
 
   const createChat = useMutation({
     mutationFn: async () => {
       const threadId = createId();
       if (newChatMode === "project") {
+        if (!newProjectDirectoryReady) {
+          throw new Error("请先选择项目工作路径。");
+        }
         const projectName = newProjectName.trim() || "未命名申报项目";
         const project = await createProject({
           name: projectName,
+          root_path: projectRootPathForCreate(
+            newProjectDirectoryMode,
+            newProjectRootPath,
+          ),
           metadata: {
             workspace_layout: "codex-design",
             created_from: "new-chat-modal",
@@ -334,8 +367,7 @@ export function WorkspaceShell({ children }: Readonly<{ children: React.ReactNod
       };
     },
     onSuccess: async (result) => {
-      setNewChatOpen(false);
-      setNewProjectName("");
+      closeNewChatModal();
       await queryClient.invalidateQueries({ queryKey: ["threads"] });
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       router.push(result.href);
@@ -601,7 +633,7 @@ export function WorkspaceShell({ children }: Readonly<{ children: React.ReactNod
 
           <div className="list-section">
             <div className="list-section-title">
-              <span>独立对话</span>
+              <span>独立与历史对话</span>
               <span className="count">{looseThreads.length}</span>
             </div>
             {looseThreads.length > 0 ? (
@@ -623,6 +655,7 @@ export function WorkspaceShell({ children }: Readonly<{ children: React.ReactNod
         </div>
 
         <div className="sl-foot">
+          <WorkspaceAccount />
           <Link className={`foot-btn${pathname.startsWith("/workspace/knowledge") ? " active" : ""}`} href="/workspace/knowledge">
             <BookOpenIcon />
             知识库
@@ -653,14 +686,13 @@ export function WorkspaceShell({ children }: Readonly<{ children: React.ReactNod
       <div className="workspace-slot">{children}</div>
 
       {newChatOpen ? (
-        <div className="modal-backdrop" role="presentation" onMouseDown={() => setNewChatOpen(false)}>
+        <div className="modal-backdrop" role="presentation" onMouseDown={closeNewChatModal}>
           <div className="new-chat-modal" role="dialog" aria-modal="true" aria-labelledby="new-chat-title" onMouseDown={(event) => event.stopPropagation()}>
             <div className="modal-head">
               <div>
                 <h2 id="new-chat-title">新对话</h2>
-                <p>选择创建新的申报项目，或直接开启独立对话。</p>
               </div>
-              <button type="button" className="icon-btn" aria-label="关闭" onClick={() => setNewChatOpen(false)}>
+              <button type="button" className="icon-btn" aria-label="关闭" onClick={closeNewChatModal}>
                 ×
               </button>
             </div>
@@ -673,7 +705,7 @@ export function WorkspaceShell({ children }: Readonly<{ children: React.ReactNod
               >
                 <FolderIcon />
                 <span>新建项目</span>
-                <small>创建项目空间、材料目录和项目会话</small>
+                <small>创建带独立目录的申报项目</small>
               </button>
               <button
                 type="button"
@@ -682,29 +714,56 @@ export function WorkspaceShell({ children }: Readonly<{ children: React.ReactNod
               >
                 <BookOpenIcon />
                 <span>直接对话</span>
-                <small>不绑定项目，创建一个独立申报咨询会话</small>
+                <small>创建不绑定项目的临时对话</small>
               </button>
             </div>
 
             {newChatMode === "project" ? (
-              <label className="modal-field">
-                <span>项目名称</span>
-                <input
-                  value={newProjectName}
-                  placeholder="例如：2026年度重点研发计划申报"
-                  onChange={(event) => setNewProjectName(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") createChat.mutate();
+              <>
+                <label className="modal-field">
+                  <span>项目名称</span>
+                  <input
+                    value={newProjectName}
+                    placeholder="例如：2026年度重点研发计划申报"
+                    onChange={(event) => setNewProjectName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && createChatReady) {
+                        event.preventDefault();
+                        createChat.mutate();
+                      }
+                    }}
+                  />
+                </label>
+                <NewProjectDirectoryField
+                  mode={newProjectDirectoryMode}
+                  rootPath={newProjectRootPath}
+                  disabled={createChat.isPending}
+                  onChange={(mode, rootPath) => {
+                    setNewProjectDirectoryMode(mode);
+                    setNewProjectRootPath(rootPath);
                   }}
                 />
-              </label>
+              </>
+            ) : null}
+
+            {createChat.isError ? (
+              <p className="modal-error">
+                {createChat.error instanceof Error
+                  ? createChat.error.message
+                  : "创建失败，请稍后重试。"}
+              </p>
             ) : null}
 
             <div className="modal-actions">
-              <button type="button" className="ghost-btn" onClick={() => setNewChatOpen(false)}>
+              <button type="button" className="ghost-btn" onClick={closeNewChatModal}>
                 取消
               </button>
-              <button type="button" className="primary-btn" onClick={() => createChat.mutate()} disabled={createChat.isPending}>
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={() => createChat.mutate()}
+                disabled={createChat.isPending || !createChatReady}
+              >
                 <PlusIcon size={15} />
                 {createChat.isPending ? "创建中" : newChatMode === "project" ? "创建项目并开始" : "开始独立对话"}
               </button>

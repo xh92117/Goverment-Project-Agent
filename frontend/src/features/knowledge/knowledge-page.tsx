@@ -1127,7 +1127,7 @@ export function KnowledgePage() {
                   <div className="empty-state compact">正在加载知识索引</div>
                 ) : visibleEntries.length === 0 ? (
                   <div className="empty-state compact">
-                    暂无知识条目。先上传文件并构建索引。
+                    暂无知识，先上传文件。
                   </div>
                 ) : (
                   knowledgeTree.map((group) => {
@@ -1355,9 +1355,7 @@ export function KnowledgePage() {
                             />
                           </div>
                         )
-                      ) : (
-                        <span>选择条目后会展示文件片段或摘要。</span>
-                      )}
+                      ) : null}
                     </div>
                     {savePreview.isError ? (
                       <div className="kb-error">{saveErrorMessage}</div>
@@ -1404,7 +1402,7 @@ export function KnowledgePage() {
             <div className="modal-head">
               <div>
                 <h2 id="knowledge-image-model-title">知识库图片识别模型</h2>
-                <p>仅显示已声明支持图像输入的模型，保存后立即生效。</p>
+                <p>选择支持图片输入的模型，保存后用于知识库图片识别。</p>
               </div>
               <button
                 type="button"
@@ -1456,7 +1454,7 @@ export function KnowledgePage() {
               ) : (
                 <div className="empty-state compact">
                   <ImageIcon size={24} />
-                  图片识别模型未配置，请在下方新增视觉模型。
+                  暂无视觉模型
                 </div>
               )}
             </div>
@@ -1464,10 +1462,6 @@ export function KnowledgePage() {
             <div className="knowledge-image-model-create">
               <div className="knowledge-image-model-create-head">
                 <h3>新增视觉模型</h3>
-                <p>
-                  配置项与“设置 →
-                  模型供应商”一致；保存后将自动启用视觉能力并用于知识库。
-                </p>
               </div>
               <div className="form-grid add-model-form knowledge-image-model-form">
                 <select
@@ -1553,7 +1547,6 @@ export function KnowledgePage() {
             </div>
 
             <div className="knowledge-image-model-foot">
-              <span>图片识别不可用时，普通文档仍会继续构建知识索引。</span>
               <div>
                 <button
                   type="button"

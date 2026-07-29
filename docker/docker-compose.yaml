@@ -105,6 +105,10 @@ services:
       - AGENT_BASE_CHANNELS_LANGGRAPH_URL=${AGENT_BASE_CHANNELS_LANGGRAPH_URL:-${DEER_FLOW_CHANNELS_LANGGRAPH_URL:-http://gateway:8001/api}}
       - AGENT_BASE_CHANNELS_GATEWAY_URL=${AGENT_BASE_CHANNELS_GATEWAY_URL:-${DEER_FLOW_CHANNELS_GATEWAY_URL:-http://gateway:8001}}
       - AGENT_BASE_INTERNAL_AUTH_TOKEN=${AGENT_BASE_INTERNAL_AUTH_TOKEN}
+      # Production is multi-user and fail-closed by default. Override only for
+      # an explicitly trusted single-user deployment.
+      - GATEWAY_ENABLE_LOCAL_AUTH=${GATEWAY_ENABLE_LOCAL_AUTH:-true}
+      - AGENT_BASE_STRICT_USER_CONTEXT=${AGENT_BASE_STRICT_USER_CONTEXT:-true}
       # DooD path/network translation
       - AGENT_BASE_HOST_BASE_DIR=${AGENT_BASE_HOME}
       - AGENT_BASE_HOST_SKILLS_PATH=${AGENT_BASE_REPO_ROOT:-${DEER_FLOW_REPO_ROOT}}/skills
@@ -137,6 +141,7 @@ services:
       - SANDBOX_IMAGE=enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
       - SKILLS_HOST_PATH=${AGENT_BASE_REPO_ROOT:-${DEER_FLOW_REPO_ROOT}}/skills
       - THREADS_HOST_PATH=${AGENT_BASE_HOME}/threads
+      - USERS_HOST_PATH=${AGENT_BASE_HOME}/users
       - KUBECONFIG_PATH=/root/.kube/config
       - NODE_HOST=host.docker.internal
       - K8S_API_SERVER=https://host.docker.internal:26443

@@ -10,6 +10,8 @@ Fine-grained permission checks remain in authz.py decorators.
 """
 
 from collections.abc import Callable
+from time import monotonic
+from uuid import uuid4
 
 from fastapi import HTTPException, Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -24,6 +26,7 @@ from app.gateway.internal_auth import (
     get_internal_user,
     is_valid_internal_auth_token,
 )
+from deerflow.runtime.tenant_logging import append_tenant_audit_event
 from deerflow.runtime.user_context import reset_current_user, set_current_user
 
 # Paths that never require authentication.
@@ -125,8 +128,57 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # JWT-decode + DB-lookup pipeline a second time per request).
         request.state.user = user
         request.state.auth = AuthContext(user=user, permissions=_ALL_PERMISSIONS)
+        request_id = str(uuid4())
+        request.state.request_id = request_id
+        started_at = monotonic()
         token = set_current_user(user)
         try:
-            return await call_next(request)
+            try:
+                response = await call_next(request)
+            except Exception:
+                self._write_audit_event(
+                    user_id=user.id,
+                    request=request,
+                    request_id=request_id,
+                    status_code=500,
+                    started_at=started_at,
+                )
+                raise
+            response.headers["X-Request-ID"] = request_id
+            self._write_audit_event(
+                user_id=user.id,
+                request=request,
+                request_id=request_id,
+                status_code=response.status_code,
+                started_at=started_at,
+            )
+            return response
         finally:
             reset_current_user(token)
+
+    @staticmethod
+    def _write_audit_event(
+        *,
+        user_id: str,
+        request: Request,
+        request_id: str,
+        status_code: int,
+        started_at: float,
+    ) -> None:
+        """Best-effort audit logging that never breaks a completed request."""
+        try:
+            append_tenant_audit_event(
+                user_id=user_id,
+                action="http_request",
+                details={
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "status_code": status_code,
+                    "duration_ms": round((monotonic() - started_at) * 1000, 3),
+                },
+            )
+        except Exception:
+            # Audit storage failure must not alter the HTTP result. Infrastructure
+            # monitoring should alert on an unwritable runtime volume.
+            return

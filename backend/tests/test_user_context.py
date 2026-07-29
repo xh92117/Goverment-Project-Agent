@@ -87,6 +87,14 @@ def test_effective_user_id_returns_default_when_no_user():
 
 
 @pytest.mark.no_auto_user
+def test_effective_user_id_fails_closed_in_strict_mode(monkeypatch):
+    """Authenticated deployments must never silently share the default bucket."""
+    monkeypatch.setenv("AGENT_BASE_STRICT_USER_CONTEXT", "true")
+    with pytest.raises(RuntimeError, match="no user context is set"):
+        get_effective_user_id()
+
+
+@pytest.mark.no_auto_user
 def test_effective_user_id_returns_user_id_when_set():
     user = SimpleNamespace(id="u-abc-123")
     token = set_current_user(user)

@@ -172,6 +172,18 @@ class Paths:
         """Directory for a specific user: `{base_dir}/users/{user_id}/`."""
         return self.base_dir / "users" / _validate_user_id(user_id)
 
+    def user_projects_dir(self, user_id: str) -> Path:
+        """Per-user project metadata and default workspace root."""
+        return self.user_dir(user_id) / "projects"
+
+    def user_drafts_dir(self, user_id: str) -> Path:
+        """Per-user root for legacy proposal drafts not tied to a project."""
+        return self.user_dir(user_id) / "proposal_drafts"
+
+    def user_logs_dir(self, user_id: str) -> Path:
+        """Per-user application and audit log directory."""
+        return self.user_dir(user_id) / "logs"
+
     def user_memory_file(self, user_id: str) -> Path:
         """Per-user memory file: `{base_dir}/users/{user_id}/memory.json`."""
         return self.user_dir(user_id) / "memory.json"

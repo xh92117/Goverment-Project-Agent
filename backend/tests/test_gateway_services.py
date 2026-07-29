@@ -699,3 +699,29 @@ def test_build_run_config_no_request_config():
     config = build_run_config("thread-abc", None, None)
     assert config["configurable"] == {"thread_id": "thread-abc"}
     assert "context" not in config
+
+
+def test_build_run_config_server_thread_id_overrides_client_configurable():
+    """A caller cannot redirect persistence to another user's thread."""
+    from app.gateway.services import build_run_config
+
+    config = build_run_config(
+        "owned-thread",
+        {"configurable": {"thread_id": "victim-thread", "model_name": "test"}},
+        None,
+    )
+
+    assert config["configurable"]["thread_id"] == "owned-thread"
+
+
+def test_build_run_config_server_thread_id_overrides_client_context():
+    """The same reserved-field rule applies to LangGraph context configs."""
+    from app.gateway.services import build_run_config
+
+    config = build_run_config(
+        "owned-thread",
+        {"context": {"thread_id": "victim-thread", "model_name": "test"}},
+        None,
+    )
+
+    assert config["context"]["thread_id"] == "owned-thread"

@@ -29,7 +29,7 @@ except ImportError:  # pragma: no cover - Windows fallback
 
 from deerflow.config import get_app_config
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX, get_paths
-from deerflow.runtime.user_context import get_effective_user_id
+from deerflow.runtime.user_context import get_effective_user_id, strict_user_context_enabled
 from deerflow.sandbox.sandbox import Sandbox
 from deerflow.sandbox.sandbox_provider import SandboxProvider
 
@@ -451,38 +451,51 @@ class AioSandboxProvider(SandboxProvider):
 
     def _get_thread_lock(self, thread_id: str) -> threading.Lock:
         """Get or create an in-process lock for a specific thread_id."""
+        scope_key = self._thread_scope_key(thread_id)
         with self._lock:
-            if thread_id not in self._thread_locks:
-                self._thread_locks[thread_id] = threading.Lock()
-            return self._thread_locks[thread_id]
+            if scope_key not in self._thread_locks:
+                self._thread_locks[scope_key] = threading.Lock()
+            return self._thread_locks[scope_key]
+
+    @staticmethod
+    def _thread_scope_key(thread_id: str) -> str:
+        """Build a tenant-aware key for locks, caches, and deterministic IDs."""
+        if not strict_user_context_enabled():
+            return thread_id
+        user_id = get_effective_user_id()
+        return f"user:{len(user_id)}:{user_id}:thread:{thread_id}"
 
     def _sandbox_id_for_thread(self, thread_id: str | None) -> str:
         """Return deterministic IDs for thread sandboxes and random IDs otherwise."""
-        return self._deterministic_sandbox_id(thread_id) if thread_id else str(uuid.uuid4())[:8]
+        return self._deterministic_sandbox_id(self._thread_scope_key(thread_id)) if thread_id else str(uuid.uuid4())[:8]
 
     def _reuse_in_process_sandbox(self, thread_id: str | None, *, post_lock: bool = False) -> str | None:
         """Reuse an active in-process sandbox for a thread if one is still tracked."""
         if thread_id is None:
             return None
 
+        scope_key = self._thread_scope_key(thread_id)
+
         with self._lock:
-            if thread_id not in self._thread_sandboxes:
+            if scope_key not in self._thread_sandboxes:
                 return None
 
-            existing_id = self._thread_sandboxes[thread_id]
+            existing_id = self._thread_sandboxes[scope_key]
             if existing_id in self._sandboxes:
                 suffix = " (post-lock check)" if post_lock else ""
                 logger.info(f"Reusing in-process sandbox {existing_id} for thread {thread_id}{suffix}")
                 self._last_activity[existing_id] = time.time()
                 return existing_id
 
-            del self._thread_sandboxes[thread_id]
+            del self._thread_sandboxes[scope_key]
             return None
 
     def _reclaim_warm_pool_sandbox(self, thread_id: str | None, sandbox_id: str, *, post_lock: bool = False) -> str | None:
         """Promote a warm-pool sandbox back to active tracking if available."""
         if thread_id is None:
             return None
+
+        scope_key = self._thread_scope_key(thread_id)
 
         with self._lock:
             if sandbox_id not in self._warm_pool:
@@ -493,7 +506,7 @@ class AioSandboxProvider(SandboxProvider):
             self._sandboxes[sandbox_id] = sandbox
             self._sandbox_infos[sandbox_id] = info
             self._last_activity[sandbox_id] = time.time()
-            self._thread_sandboxes[thread_id] = sandbox_id
+            self._thread_sandboxes[scope_key] = sandbox_id
 
         suffix = " (post-lock check)" if post_lock else f" at {info.sandbox_url}"
         logger.info(f"Reclaimed warm-pool sandbox {sandbox_id} for thread {thread_id}{suffix}")
@@ -505,25 +518,27 @@ class AioSandboxProvider(SandboxProvider):
 
     def _register_discovered_sandbox(self, thread_id: str, info: SandboxInfo) -> str:
         """Track a sandbox discovered through the backend."""
+        scope_key = self._thread_scope_key(thread_id)
         sandbox = AioSandbox(id=info.sandbox_id, base_url=info.sandbox_url)
         with self._lock:
             self._sandboxes[info.sandbox_id] = sandbox
             self._sandbox_infos[info.sandbox_id] = info
             self._last_activity[info.sandbox_id] = time.time()
-            self._thread_sandboxes[thread_id] = info.sandbox_id
+            self._thread_sandboxes[scope_key] = info.sandbox_id
 
         logger.info(f"Discovered existing sandbox {info.sandbox_id} for thread {thread_id} at {info.sandbox_url}")
         return info.sandbox_id
 
     def _register_created_sandbox(self, thread_id: str | None, sandbox_id: str, info: SandboxInfo) -> str:
         """Track a newly-created sandbox in the active maps."""
+        scope_key = self._thread_scope_key(thread_id) if thread_id else None
         sandbox = AioSandbox(id=sandbox_id, base_url=info.sandbox_url)
         with self._lock:
             self._sandboxes[sandbox_id] = sandbox
             self._sandbox_infos[sandbox_id] = info
             self._last_activity[sandbox_id] = time.time()
-            if thread_id:
-                self._thread_sandboxes[thread_id] = sandbox_id
+            if scope_key:
+                self._thread_sandboxes[scope_key] = sandbox_id
 
         logger.info(f"Created sandbox {sandbox_id} for thread {thread_id} at {info.sandbox_url}")
         return sandbox_id

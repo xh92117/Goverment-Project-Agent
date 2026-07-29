@@ -80,6 +80,7 @@ class RunRecord:
     assistant_id: str | None
     status: RunStatus
     on_disconnect: DisconnectMode
+    user_id: str | None = None
     multitask_strategy: str = "reject"
     metadata: dict = field(default_factory=dict)
     kwargs: dict = field(default_factory=dict)
@@ -124,7 +125,7 @@ class RunManager:
 
     @staticmethod
     def _store_put_payload(record: RunRecord, *, error: str | None = None) -> dict[str, Any]:
-        return {
+        payload = {
             "thread_id": record.thread_id,
             "assistant_id": record.assistant_id,
             "status": record.status.value,
@@ -135,6 +136,12 @@ class RunManager:
             "created_at": record.created_at,
             "model_name": record.model_name,
         }
+        # Omit rather than pass explicit ``None`` so repository stores retain
+        # their AUTO/contextvar semantics for legacy callers. Gateway requests
+        # always stamp an explicit authenticated user ID.
+        if record.user_id is not None:
+            payload["user_id"] = record.user_id
+        return payload
 
     async def _call_store_with_retry(
         self,
@@ -236,6 +243,7 @@ class RunManager:
             assistant_id=row.get("assistant_id"),
             status=RunStatus(row.get("status") or RunStatus.pending.value),
             on_disconnect=DisconnectMode(row.get("on_disconnect") or DisconnectMode.cancel.value),
+            user_id=row.get("user_id"),
             multitask_strategy=row.get("multitask_strategy") or "reject",
             metadata=row.get("metadata") or {},
             kwargs=row.get("kwargs") or {},
@@ -320,6 +328,7 @@ class RunManager:
         metadata: dict | None = None,
         kwargs: dict | None = None,
         multitask_strategy: str = "reject",
+        user_id: str | None = None,
     ) -> RunRecord:
         """Create a new pending run and register it."""
         run_id = str(uuid.uuid4())
@@ -330,6 +339,7 @@ class RunManager:
             assistant_id=assistant_id,
             status=RunStatus.pending,
             on_disconnect=on_disconnect,
+            user_id=user_id,
             multitask_strategy=multitask_strategy,
             metadata=metadata or {},
             kwargs=kwargs or {},
@@ -361,8 +371,10 @@ class RunManager:
         """
         async with self._lock:
             record = self._runs.get(run_id)
-        if record is not None:
+        if record is not None and (user_id is None or record.user_id == user_id):
             return record
+        if record is not None:
+            return None
         if self._store is None:
             return None
         try:
@@ -374,8 +386,10 @@ class RunManager:
         # in-memory record while the store call was in flight.
         async with self._lock:
             record = self._runs.get(run_id)
-        if record is not None:
+        if record is not None and (user_id is None or record.user_id == user_id):
             return record
+        if record is not None:
+            return None
         if row is None:
             return None
         try:
@@ -405,7 +419,11 @@ class RunManager:
         """
         async with self._lock:
             # Dict insertion order gives deterministic results when timestamps tie.
-            memory_records = [r for r in self._runs.values() if r.thread_id == thread_id]
+            memory_records = [
+                r
+                for r in self._runs.values()
+                if r.thread_id == thread_id and (user_id is None or r.user_id == user_id)
+            ]
         if self._store is None:
             return sorted(memory_records, key=lambda r: r.created_at, reverse=True)[:limit]
         records_by_id = {record.run_id: record for record in memory_records}
@@ -504,6 +522,7 @@ class RunManager:
         kwargs: dict | None = None,
         multitask_strategy: str = "reject",
         model_name: str | None = None,
+        user_id: str | None = None,
     ) -> RunRecord:
         """Atomically check for inflight runs and create a new one.
 
@@ -524,7 +543,13 @@ class RunManager:
             if multitask_strategy not in _supported_strategies:
                 raise UnsupportedStrategyError(f"Multitask strategy '{multitask_strategy}' is not yet supported. Supported strategies: {', '.join(_supported_strategies)}")
 
-            inflight = [r for r in self._runs.values() if r.thread_id == thread_id and r.status in (RunStatus.pending, RunStatus.running)]
+            inflight = [
+                r
+                for r in self._runs.values()
+                if r.thread_id == thread_id
+                and (user_id is None or r.user_id == user_id)
+                and r.status in (RunStatus.pending, RunStatus.running)
+            ]
 
             if multitask_strategy == "reject" and inflight:
                 raise ConflictError(f"Thread {thread_id} already has an active run")
@@ -543,6 +568,7 @@ class RunManager:
                 assistant_id=assistant_id,
                 status=RunStatus.pending,
                 on_disconnect=on_disconnect,
+                user_id=user_id,
                 multitask_strategy=multitask_strategy,
                 metadata=metadata or {},
                 kwargs=kwargs or {},
@@ -632,10 +658,15 @@ class RunManager:
             logger.warning("Recovered %d orphaned inflight run(s) as error", len(recovered))
         return recovered
 
-    async def has_inflight(self, thread_id: str) -> bool:
+    async def has_inflight(self, thread_id: str, *, user_id: str | None = None) -> bool:
         """Return ``True`` if *thread_id* has a pending or running run."""
         async with self._lock:
-            return any(r.thread_id == thread_id and r.status in (RunStatus.pending, RunStatus.running) for r in self._runs.values())
+            return any(
+                r.thread_id == thread_id
+                and (user_id is None or r.user_id == user_id)
+                and r.status in (RunStatus.pending, RunStatus.running)
+                for r in self._runs.values()
+            )
 
     async def cleanup(self, run_id: str, *, delay: float = 300) -> None:
         """Remove a run record after an optional delay."""

@@ -10,6 +10,7 @@ from weakref import WeakValueDictionary
 from langchain.tools import tool
 
 from deerflow.agents.lead_agent.prompt import refresh_skills_system_prompt_cache_async
+from deerflow.runtime.user_context import strict_user_context_enabled
 from deerflow.skills.security_scanner import scan_skill_content
 from deerflow.skills.storage import get_or_new_skill_storage
 from deerflow.skills.storage.skill_storage import SkillStorage
@@ -84,6 +85,11 @@ async def _skill_manage_impl(
         replace: Replacement text for patch.
         expected_count: Optional expected number of replacements for patch.
     """
+    runtime_context = getattr(runtime, "context", None)
+    system_role = runtime_context.get("system_role") if isinstance(runtime_context, dict) else None
+    if strict_user_context_enabled() and system_role != "admin":
+        raise PermissionError("Shared skill management requires an admin user.")
+
     name = SkillStorage.validate_skill_name(name)
     lock = _get_lock(name)
     thread_id = _get_thread_id(runtime)

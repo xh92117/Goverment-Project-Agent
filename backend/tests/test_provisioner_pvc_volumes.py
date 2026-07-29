@@ -35,6 +35,19 @@ class TestBuildVolumes:
         assert path.endswith("user-data")
         assert userdata_vol.host_path.type == "DirectoryOrCreate"
 
+    def test_hostpath_userdata_is_scoped_by_user_id(self, provisioner_module):
+        """hostPath mode must isolate identical thread IDs across tenants."""
+        provisioner_module.USERDATA_PVC_NAME = ""
+
+        volumes_a = provisioner_module._build_volumes("shared-thread", user_id="tenant-a")
+        volumes_b = provisioner_module._build_volumes("shared-thread", user_id="tenant-b")
+
+        path_a = volumes_a[1].host_path.path
+        path_b = volumes_b[1].host_path.path
+        assert path_a != path_b
+        assert "tenant-a" in path_a
+        assert "tenant-b" in path_b
+
     def test_skills_pvc_overrides_hostpath(self, provisioner_module):
         """When SKILLS_PVC_NAME is set, skills volume should use PVC."""
         provisioner_module.SKILLS_PVC_NAME = "my-skills-pvc"

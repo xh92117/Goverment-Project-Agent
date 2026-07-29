@@ -245,7 +245,8 @@ async def cancel_run(
     - wait=false: Return immediately with 202
     """
     run_mgr = get_run_manager(request)
-    record = await run_mgr.get(run_id)
+    user_id = await get_current_user(request)
+    record = await run_mgr.get(run_id, user_id=user_id)
     if record is None or record.thread_id != thread_id:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
@@ -268,7 +269,8 @@ async def cancel_run(
 async def join_run(thread_id: str, run_id: str, request: Request) -> StreamingResponse:
     """Join an existing run's SSE stream."""
     run_mgr = get_run_manager(request)
-    record = await run_mgr.get(run_id)
+    user_id = await get_current_user(request)
+    record = await run_mgr.get(run_id, user_id=user_id)
     if record is None or record.thread_id != thread_id:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
     if record.store_only:
@@ -308,7 +310,8 @@ async def stream_existing_run(
     remaining buffered events so the client observes a clean shutdown.
     """
     run_mgr = get_run_manager(request)
-    record = await run_mgr.get(run_id)
+    user_id = await get_current_user(request)
+    record = await run_mgr.get(run_id, user_id=user_id)
     if record is None or record.thread_id != thread_id:
         raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
     if record.store_only and action is None:

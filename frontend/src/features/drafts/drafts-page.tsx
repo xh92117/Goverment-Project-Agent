@@ -89,7 +89,6 @@ export function DraftsPage() {
       <header className="main-head">
         <div>
           <div className="mh-title">草稿</div>
-          <div className="mh-breadcrumb">申报书章节、版本与导出</div>
         </div>
         <div className="mh-right">
           <span className="tag muted">{flatDrafts.length} 个章节</span>

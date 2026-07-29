@@ -62,7 +62,7 @@ def test_draft_docx_download_uses_default_word_format(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setattr(proposal_drafts, "government_project_drafts_root", lambda: tmp_path)
+    monkeypatch.setattr(proposal_drafts, "_drafts_root", lambda: tmp_path)
     draft = tmp_path / "项目A" / "技术路线.md"
     draft.parent.mkdir(parents=True)
     draft.write_text(

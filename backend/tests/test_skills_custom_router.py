@@ -5,11 +5,13 @@ import zipfile
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 from _router_auth_helpers import make_authed_test_app
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.gateway.auth.models import User
 from app.gateway.deps import get_config
 from app.gateway.routers import skills as skills_router
 from app.gateway.routers import uploads as uploads_router
@@ -47,6 +49,24 @@ def _make_test_app(config) -> FastAPI:
     app.dependency_overrides[get_config] = lambda: config
     app.include_router(skills_router.router)
     return app
+
+
+def test_non_admin_cannot_mutate_shared_skills(monkeypatch):
+    config = SimpleNamespace(
+        skills=SimpleNamespace(),
+        skill_evolution=SimpleNamespace(enabled=True, moderation_model_name=None),
+    )
+    app = make_authed_test_app()
+    app.dependency_overrides[get_config] = lambda: config
+    app.include_router(skills_router.router)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/skills/install",
+            json={"thread_id": "thread-1", "path": "mnt/user-data/outputs/demo.skill"},
+        )
+
+    assert response.status_code == 403
 
 
 def _make_skill_archive(tmp_path: Path, name: str, content: str | None = None) -> Path:
@@ -141,7 +161,14 @@ def test_uploaded_skill_archive_installs_sandbox_readable_tree(monkeypatch, tmp_
     monkeypatch.setattr("deerflow.skills.installer.scan_skill_content", _scan)
     monkeypatch.setattr(skills_router, "refresh_skills_system_prompt_cache_async", _refresh)
 
-    app = make_authed_test_app()
+    app = make_authed_test_app(
+        user_factory=lambda: User(
+            email="admin@example.com",
+            password_hash="x",
+            system_role="admin",
+            id=uuid4(),
+        )
+    )
     app.state.config = config
     app.dependency_overrides[get_config] = lambda: config
     app.include_router(uploads_router.router)

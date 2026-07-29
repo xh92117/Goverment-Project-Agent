@@ -44,6 +44,28 @@ class TestMigrateThreadDirs:
         expected = base_dir / "users" / "default" / "threads" / "t2"
         assert expected.exists()
 
+    def test_unowned_thread_can_be_claimed_by_selected_user(self, base_dir: Path, paths: Paths):
+        legacy = base_dir / "threads" / "t2" / "user-data" / "workspace"
+        legacy.mkdir(parents=True)
+
+        from scripts.migrate_user_isolation import migrate_thread_dirs
+
+        migrate_thread_dirs(paths, thread_owner_map={}, default_user_id="admin-1")
+
+        assert (base_dir / "users" / "admin-1" / "threads" / "t2").exists()
+        assert not (base_dir / "users" / "default" / "threads" / "t2").exists()
+
+    def test_rejects_unsafe_owner_id(self, base_dir: Path, paths: Paths):
+        legacy = base_dir / "threads" / "t2" / "user-data"
+        legacy.mkdir(parents=True)
+
+        from scripts.migrate_user_isolation import migrate_thread_dirs
+
+        with pytest.raises(ValueError, match="Invalid user_id"):
+            migrate_thread_dirs(paths, thread_owner_map={"t2": "../escape"})
+
+        assert legacy.exists()
+
     def test_idempotent_skip_already_migrated(self, base_dir: Path, paths: Paths):
         new_dir = base_dir / "users" / "alice" / "threads" / "t1" / "user-data" / "workspace"
         new_dir.mkdir(parents=True)
@@ -190,3 +212,51 @@ class TestMigrateAgents:
 
         report = migrate_agents(paths, user_id="default")
         assert report == []
+
+
+class TestMigrateWorkspaceCollections:
+    def test_moves_legacy_projects_and_drafts_to_selected_user(self, base_dir: Path, paths: Paths):
+        legacy_projects = base_dir / "legacy-projects"
+        legacy_drafts = base_dir / "legacy-drafts"
+        (legacy_projects / "project-a").mkdir(parents=True)
+        (legacy_projects / "project-a" / "project.json").write_text("{}", encoding="utf-8")
+        (legacy_drafts / "draft-a").mkdir(parents=True)
+        (legacy_drafts / "draft-a" / "draft.md").write_text("draft", encoding="utf-8")
+
+        from scripts.migrate_user_isolation import migrate_legacy_collection
+
+        migrate_legacy_collection(
+            paths,
+            source_root=legacy_projects,
+            destination_root=paths.user_projects_dir("admin-1"),
+            category="projects",
+        )
+        migrate_legacy_collection(
+            paths,
+            source_root=legacy_drafts,
+            destination_root=paths.user_drafts_dir("admin-1"),
+            category="proposal-drafts",
+        )
+
+        assert (paths.user_projects_dir("admin-1") / "project-a" / "project.json").exists()
+        assert (paths.user_drafts_dir("admin-1") / "draft-a" / "draft.md").exists()
+        assert not legacy_projects.exists()
+        assert not legacy_drafts.exists()
+
+
+def test_owner_map_reads_current_agent_base_database_path(base_dir: Path, paths: Paths):
+    import sqlite3
+
+    db_path = base_dir / "data" / "agent_base.db"
+    db_path.parent.mkdir(parents=True)
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("CREATE TABLE threads_meta (thread_id TEXT, user_id TEXT)")
+        connection.execute("INSERT INTO threads_meta VALUES (?, ?)", ("thread-1", "tenant-a"))
+        connection.commit()
+    finally:
+        connection.close()
+
+    from scripts.migrate_user_isolation import _build_owner_map_from_db
+
+    assert _build_owner_map_from_db(paths) == {"thread-1": "tenant-a"}

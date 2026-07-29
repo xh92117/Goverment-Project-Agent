@@ -11,6 +11,23 @@ def _skill_content(name: str, description: str = "Demo skill") -> str:
     return f"---\nname: {name}\ndescription: {description}\n---\n\n# {name}\n"
 
 
+def test_skill_manage_requires_admin_in_strict_multi_user_mode(monkeypatch):
+    monkeypatch.setenv("AGENT_BASE_STRICT_USER_CONTEXT", "true")
+    runtime = SimpleNamespace(
+        context={"thread_id": "thread-1", "user_id": "alice", "system_role": "user"},
+        config={"configurable": {"thread_id": "thread-1"}},
+    )
+
+    with pytest.raises(PermissionError, match="admin"):
+        anyio.run(
+            skill_manage_module.skill_manage_tool.coroutine,
+            runtime,
+            "create",
+            "forbidden-skill",
+            _skill_content("forbidden-skill"),
+        )
+
+
 async def _async_result(decision: str, reason: str):
     from deerflow.skills.security_scanner import ScanResult
 

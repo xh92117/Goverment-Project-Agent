@@ -695,9 +695,6 @@ export function ProjectWorkspacePage({
               <div className="welcome-panel compact">
                 <div className="welcome-emblem">策</div>
                 <h1>围绕当前项目开始协作</h1>
-                <p>
-                  可以让智策检索政策、梳理技术路线、生成预算说明，或根据右侧材料完善申报书。
-                </p>
               </div>
             ) : (
               <MessageList
@@ -714,7 +711,7 @@ export function ProjectWorkspacePage({
                 <textarea
                   value={input}
                   rows={2}
-                  placeholder="输入消息，与智策助手协作推进项目..."
+                  placeholder="输入申报问题…"
                   onChange={(event) => setInput(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
@@ -929,7 +926,7 @@ export function ProjectWorkspacePage({
                       <div className="empty-state compact">正在读取文件</div>
                     ) : fileContent.isError ? (
                       <div className="empty-state compact">
-                        该文件暂不支持在线预览，可直接下载查看。
+                        不支持预览，请下载查看。
                       </div>
                     ) : fileContent.data?.content ? (
                       <div className="msg-content file-markdown-view compact">
@@ -937,7 +934,7 @@ export function ProjectWorkspacePage({
                       </div>
                     ) : (
                       <div className="empty-state compact">
-                        该文件暂不支持在线预览，可直接下载查看。
+                        不支持预览，请下载查看。
                       </div>
                     )}
                   </div>
@@ -996,7 +993,9 @@ export function ProjectWorkspacePage({
                   ) : (
                     <FolderOpenIcon size={15} />
                   )}
-                  选择电脑目录
+                  {selectDirectory.isPending
+                    ? "请在系统窗口中选择"
+                    : "选择电脑目录"}
                 </button>
                 <strong>{directoryDraftPath || "未选择目录"}</strong>
               </div>
@@ -1141,7 +1140,7 @@ export function ProjectWorkspacePage({
                 <div className="empty-state compact">正在读取文件</div>
               ) : fileContent.isError ? (
                 <div className="empty-state compact">
-                  该文件暂不支持在线预览，可直接下载查看。
+                  不支持预览，请下载查看。
                 </div>
               ) : fileEditing ? (
                 <textarea

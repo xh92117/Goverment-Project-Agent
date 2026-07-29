@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-import asyncio
 import io
 import mimetypes
 import os
 import re
 import shutil
 import subprocess
+import threading
 import webbrowser
 import zipfile
+from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 from typing import Literal
 from urllib.parse import quote
 from uuid import uuid4
@@ -24,7 +27,7 @@ from pydantic import BaseModel, Field
 from app.gateway.deps import get_thread_store
 from app.gateway.docx_export import build_markdown_docx, docx_media_type
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX, get_paths
-from deerflow.government_project_workspace import government_project_projects_root, government_project_workspace_root
+from deerflow.government_project_workspace import government_project_workspace_root
 from deerflow.knowledge.export_images import (
     ExportEvidenceDocument,
     ExportImageSelectionModelError,
@@ -32,7 +35,7 @@ from deerflow.knowledge.export_images import (
     NoVerifiedImageEvidenceError,
     enrich_export_documents_with_images,
 )
-from deerflow.runtime.user_context import get_effective_user_id
+from deerflow.runtime.user_context import get_effective_user_id, strict_user_context_enabled
 from deerflow.uploads.manager import (
     UnsafeUploadPathError,
     claim_unique_filename,
@@ -70,6 +73,7 @@ class ProjectCreateRequest(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     project_id: str | None = Field(default=None)
     type: str = Field(default=_DEFAULT_PROJECT_TYPE, max_length=80)
+    root_path: str | None = Field(default=None, max_length=4096)
     metadata: dict[str, object] = Field(default_factory=dict)
 
 
@@ -109,9 +113,16 @@ class ProjectDirectoryOpenResponse(BaseModel):
 
 
 class ProjectDirectorySelectResponse(BaseModel):
-    project_id: str
+    selection_id: str
+    status: Literal["pending", "selected", "cancelled", "error"]
+    project_id: str | None = None
     root_path: str | None = None
     selected: bool = False
+    error: str | None = None
+
+
+class NewProjectDirectorySelectRequest(BaseModel):
+    initial_path: str | None = Field(default=None, max_length=4096)
 
 
 class ProjectFileNode(BaseModel):
@@ -243,7 +254,7 @@ def _now_iso() -> str:
 
 
 def _projects_root() -> Path:
-    root = government_project_projects_root().resolve()
+    root = get_paths().user_projects_dir(get_effective_user_id()).resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -278,13 +289,26 @@ def _default_project_root(project_id: str) -> Path:
 
 
 def _default_workspace_root() -> Path:
-    root = government_project_workspace_root().resolve()
+    if strict_user_context_enabled():
+        root = get_paths().user_projects_dir(get_effective_user_id()).resolve()
+    else:
+        root = government_project_workspace_root().resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
 
 
 def _ensure_external_project_root(path: Path) -> Path:
     resolved = path.expanduser().resolve()
+    if strict_user_context_enabled():
+        user_root = get_paths().user_dir(get_effective_user_id()).resolve()
+        try:
+            resolved.relative_to(user_root)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="Project directory must stay inside the current user's storage root.",
+            ) from exc
+        return resolved
     code_root = _repo_root().resolve()
     try:
         resolved.relative_to(code_root)
@@ -734,12 +758,13 @@ async def create_project(body: ProjectCreateRequest) -> ProjectResponse:
     if not name:
         raise HTTPException(status_code=400, detail="Project name is required.")
     now = _now_iso()
+    project_root = _resolve_project_root_path(body.root_path, project_id) if body.root_path else project_dir
     project = ProjectResponse(
         project_id=project_id,
         name=name,
         type=body.type.strip() or _DEFAULT_PROJECT_TYPE,
         status="active",
-        root_path=str(project_dir),
+        root_path=str(project_root),
         created_at=now,
         updated_at=now,
         metadata=body.metadata,
@@ -792,7 +817,9 @@ def _open_directory(path: Path) -> None:
 def _select_project_directory(initial_dir: Path) -> Path | None:
     if os.name == "nt":
         script = rf"""
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
 $dialog.Description = '选择项目目录'
@@ -801,15 +828,41 @@ $initial = '{str(initial_dir).replace("'", "''")}'
 if ([System.IO.Directory]::Exists($initial)) {{
     $dialog.SelectedPath = $initial
 }}
-$result = $dialog.ShowDialog()
-if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
-    Write-Output $dialog.SelectedPath
-    exit 0
+$owner = New-Object System.Windows.Forms.Form
+$owner.Text = '选择项目目录'
+$owner.Size = New-Object System.Drawing.Size(1, 1)
+$owner.StartPosition = 'CenterScreen'
+$owner.ShowInTaskbar = $false
+$owner.FormBorderStyle = 'FixedToolWindow'
+$owner.Opacity = 0
+$owner.TopMost = $true
+$owner.Show()
+$owner.Activate()
+try {{
+    $result = $dialog.ShowDialog($owner)
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {{
+        Write-Output $dialog.SelectedPath
+        exit 0
+    }}
+    exit 2
+}} finally {{
+    $owner.Close()
+    $owner.Dispose()
+    $dialog.Dispose()
 }}
-exit 2
 """
         completed = subprocess.run(
-            ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-Command", script],
+            [
+                "powershell.exe",
+                "-NoProfile",
+                "-STA",
+                "-WindowStyle",
+                "Hidden",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                script,
+            ],
             check=False,
             capture_output=True,
             text=True,
@@ -842,6 +895,129 @@ exit 2
     finally:
         root.destroy()
     return Path(selected).expanduser().resolve() if selected else None
+
+
+@dataclass(frozen=True)
+class _DirectorySelectionJob:
+    selection_id: str
+    owner_id: str
+    project_id: str | None
+    created_at: float
+    future: Future[Path | None]
+
+
+_DIRECTORY_SELECTION_EXECUTOR = ThreadPoolExecutor(
+    max_workers=2,
+    thread_name_prefix="project-directory-picker",
+)
+_DIRECTORY_SELECTION_JOBS: dict[str, _DirectorySelectionJob] = {}
+_DIRECTORY_SELECTION_LOCK = threading.Lock()
+_DIRECTORY_SELECTION_RETENTION_SECONDS = 300.0
+
+
+def _directory_selection_response(job: _DirectorySelectionJob) -> ProjectDirectorySelectResponse:
+    if not job.future.done():
+        return ProjectDirectorySelectResponse(
+            selection_id=job.selection_id,
+            status="pending",
+            project_id=job.project_id,
+        )
+    try:
+        selected = job.future.result()
+    except Exception as exc:  # noqa: BLE001 - desktop integration boundary
+        return ProjectDirectorySelectResponse(
+            selection_id=job.selection_id,
+            status="error",
+            project_id=job.project_id,
+            error=str(exc) or "Directory selection failed.",
+        )
+    if selected is None:
+        return ProjectDirectorySelectResponse(
+            selection_id=job.selection_id,
+            status="cancelled",
+            project_id=job.project_id,
+        )
+    try:
+        selected_root = _ensure_external_project_root(selected)
+    except HTTPException as exc:
+        return ProjectDirectorySelectResponse(
+            selection_id=job.selection_id,
+            status="error",
+            project_id=job.project_id,
+            error=str(exc.detail),
+        )
+    return ProjectDirectorySelectResponse(
+        selection_id=job.selection_id,
+        status="selected",
+        project_id=job.project_id,
+        root_path=str(selected_root),
+        selected=True,
+    )
+
+
+def _start_directory_selection(
+    initial_dir: Path,
+    *,
+    project_id: str | None = None,
+) -> ProjectDirectorySelectResponse:
+    owner_id = get_effective_user_id()
+    now = monotonic()
+    with _DIRECTORY_SELECTION_LOCK:
+        expired = [selection_id for selection_id, job in _DIRECTORY_SELECTION_JOBS.items() if job.future.done() and now - job.created_at > _DIRECTORY_SELECTION_RETENTION_SECONDS]
+        for selection_id in expired:
+            _DIRECTORY_SELECTION_JOBS.pop(selection_id, None)
+
+        for job in _DIRECTORY_SELECTION_JOBS.values():
+            if job.owner_id == owner_id and job.project_id == project_id and not job.future.done():
+                return _directory_selection_response(job)
+
+        selection_id = uuid4().hex
+        job = _DirectorySelectionJob(
+            selection_id=selection_id,
+            owner_id=owner_id,
+            project_id=project_id,
+            created_at=now,
+            future=_DIRECTORY_SELECTION_EXECUTOR.submit(
+                _select_project_directory,
+                initial_dir,
+            ),
+        )
+        _DIRECTORY_SELECTION_JOBS[selection_id] = job
+    return _directory_selection_response(job)
+
+
+def _read_directory_selection(selection_id: str) -> ProjectDirectorySelectResponse:
+    owner_id = get_effective_user_id()
+    with _DIRECTORY_SELECTION_LOCK:
+        job = _DIRECTORY_SELECTION_JOBS.get(selection_id)
+    if job is None or job.owner_id != owner_id:
+        raise HTTPException(status_code=404, detail="Directory selection was not found.")
+    return _directory_selection_response(job)
+
+
+@router.post(
+    "/directory/select",
+    response_model=ProjectDirectorySelectResponse,
+    summary="Select New Project Directory",
+)
+async def select_new_project_directory(
+    body: NewProjectDirectorySelectRequest,
+) -> ProjectDirectorySelectResponse:
+    initial_dir = _default_workspace_root()
+    if body.initial_path:
+        initial_dir = _ensure_external_project_root(Path(body.initial_path))
+    return _start_directory_selection(initial_dir)
+
+
+@router.get(
+    "/directory/select/{selection_id}",
+    response_model=ProjectDirectorySelectResponse,
+    summary="Get Project Directory Selection",
+)
+async def get_project_directory_selection(
+    selection_id: str,
+) -> ProjectDirectorySelectResponse:
+    return _read_directory_selection(selection_id)
 
 
 @router.get(
@@ -880,14 +1056,10 @@ async def update_project_directory(project_id: str, body: ProjectDirectoryUpdate
 )
 async def select_project_directory(project_id: str) -> ProjectDirectorySelectResponse:
     project = _read_project(project_id)
-    try:
-        selected = await asyncio.to_thread(_select_project_directory, Path(project.root_path).resolve())
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    if selected is None:
-        return ProjectDirectorySelectResponse(project_id=project.project_id, selected=False)
-    selected_root = _resolve_project_root_path(str(selected), project_id)
-    return ProjectDirectorySelectResponse(project_id=project.project_id, root_path=str(selected_root), selected=True)
+    return _start_directory_selection(
+        Path(project.root_path).resolve(),
+        project_id=project.project_id,
+    )
 
 
 @router.post(
