@@ -35,6 +35,46 @@ describe("project Word image export", () => {
     expect(payload.include_images).toBe(true);
     expect(payload.applicant_id).toBe("default");
     expect(payload.model_name).toBe("qwen-selector");
+    expect(payload).not.toHaveProperty("word_format");
+  });
+
+  it("sends manual Word settings only when supplied", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(new Response("docx", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await exportProjectFilesDocx(
+      "project-1",
+      [
+        {
+          name: "foundation.md",
+          source: "project",
+          read_path: "outputs/foundation.md",
+        },
+      ],
+      "merged",
+      "Project",
+      {
+        wordFormat: {
+          bodyFont: "宋体",
+          bodyFontSizePt: 14,
+          lineSpacing: 2,
+          headingFont: "楷体",
+          headingStartLevel: 2,
+        },
+      },
+    );
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const payload = JSON.parse(request.body as string);
+    expect(payload.word_format).toEqual({
+      body_font: "宋体",
+      body_font_size_pt: 14,
+      line_spacing: 2,
+      heading_font: "楷体",
+      heading_start_level: 2,
+    });
   });
 
   it("renders an explicit image choice in the export modal", () => {
@@ -52,6 +92,17 @@ describe("project Word image export", () => {
     expect(modalSource).toContain("不插入图片");
     expect(modalSource).toContain("智能匹配并插入");
     expect(modalSource).toContain("includeImages");
+    expect(modalSource).toContain('<details className="export-word-settings">');
+    expect(modalSource).toContain("Word 格式设置");
+    expect(modalSource).toContain("正文字体");
+    expect(modalSource).toContain("行间距");
+    expect(modalSource).toContain("标题起始等级");
+    expect(modalSource).toContain(
+      "wordFormatCustomized ? wordFormat : undefined",
+    );
+    expect(modalSource).not.toContain(
+      '<details className="export-word-settings" open>',
+    );
     expect(modalSource).not.toContain(
       "选择当前文件夹下需要导出的一个或多个文件。",
     );

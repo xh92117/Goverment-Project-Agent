@@ -16,12 +16,16 @@ import {
   SaveIcon,
   SearchIcon,
   Settings2Icon,
+  ShieldCheckIcon,
   Trash2Icon,
   UploadIcon,
+  UserRoundIcon,
   XIcon,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { AUTH_STATE_QUERY_KEY } from "@/features/auth/auth-gate";
+import { probeAuthState } from "@/features/auth/route-policy";
 import { MarkdownRenderer } from "@/features/chat/markdown-renderer";
 import {
   batchReviewKnowledgeEvidence,
@@ -44,7 +48,12 @@ import type {
   KnowledgeImageModelCreateRequest,
   KnowledgeIndexEntry,
   KnowledgeIndexSearchHit,
+  KnowledgeScope,
 } from "@/features/knowledge/api";
+import {
+  canManagePublicKnowledge,
+  defaultKnowledgeScope,
+} from "@/features/knowledge/knowledge-access";
 import { modelProviderOptions } from "@/features/settings/model-providers";
 import { formatDateTime } from "@/shared/lib/format";
 
@@ -177,6 +186,16 @@ const EMPTY_IMAGE_MODEL_FORM: KnowledgeImageModelCreateRequest = {
 export function KnowledgePage() {
   const queryClient = useQueryClient();
   const uploadRef = useRef<HTMLInputElement | null>(null);
+  const scopeInitializedRef = useRef(false);
+  const authState = useQuery({
+    queryKey: AUTH_STATE_QUERY_KEY,
+    queryFn: probeAuthState,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const canManagePublic = canManagePublicKnowledge(authState.data);
+  const [knowledgeScope, setKnowledgeScope] =
+    useState<KnowledgeScope>("private");
   const [category, setCategory] = useState("");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<KnowledgeIndexEntry | null>(null);
@@ -197,14 +216,23 @@ export function KnowledgePage() {
   const [imageModelForm, setImageModelForm] =
     useState<KnowledgeImageModelCreateRequest>(EMPTY_IMAGE_MODEL_FORM);
 
+  useEffect(() => {
+    if (!authState.data || scopeInitializedRef.current) return;
+    scopeInitializedRef.current = true;
+    setKnowledgeScope(defaultKnowledgeScope(authState.data));
+  }, [authState.data]);
+
   const index = useQuery({
-    queryKey: ["knowledge-index-page", category, pageOffset],
+    queryKey: ["knowledge-index-page", knowledgeScope, category, pageOffset],
     queryFn: () =>
       listKnowledgeIndexPage(
         category ? category : undefined,
         pageOffset,
         INDEX_PAGE_SIZE,
+        "",
+        knowledgeScope,
       ),
+    enabled: Boolean(authState.data),
   });
   const indexEntries = useMemo(
     () => index.data?.entries ?? [],
@@ -214,6 +242,7 @@ export function KnowledgePage() {
   const imageModelSettings = useQuery({
     queryKey: ["knowledge-image-model-settings"],
     queryFn: loadKnowledgeImageModelSettings,
+    enabled: canManagePublic,
   });
 
   useEffect(() => {
@@ -230,11 +259,13 @@ export function KnowledgePage() {
       selected?.index_id,
       selected ? entryPreviewPath(selected) : "",
       selected?.source_anchor,
+      knowledgeScope,
     ],
     queryFn: () =>
       readKnowledgeFile(
         selected ? entryPreviewPath(selected) : "",
         selected?.source_anchor,
+        knowledgeScope,
       ),
     enabled: Boolean(selected),
   });
@@ -338,7 +369,14 @@ export function KnowledgePage() {
   }, [query]);
 
   const upload = useMutation({
-    mutationFn: (files: File[]) => uploadKnowledgeFiles(files),
+    mutationFn: (files: File[]) =>
+      uploadKnowledgeFiles(
+        files,
+        "_incoming",
+        "default",
+        "image_evidence",
+        knowledgeScope,
+      ),
     onSuccess: async () => {
       setSelected(null);
       setSearchResults(null);
@@ -349,8 +387,13 @@ export function KnowledgePage() {
     },
   });
 
+  function startKnowledgeUpload(files: File[]) {
+    upload.reset();
+    upload.mutate(files);
+  }
+
   const rebuild = useMutation({
-    mutationFn: () => buildKnowledgeIndex(),
+    mutationFn: () => buildKnowledgeIndex(undefined, knowledgeScope),
     onSuccess: async (data) => {
       setSelected(null);
       setSearchResults(null);
@@ -369,7 +412,7 @@ export function KnowledgePage() {
   });
 
   const processIncoming = useMutation({
-    mutationFn: () => processIncomingAndBuildKnowledgeIndex(),
+    mutationFn: () => processIncomingAndBuildKnowledgeIndex(knowledgeScope),
     onSuccess: async (data) => {
       setSelected(null);
       setSearchResults(null);
@@ -389,7 +432,12 @@ export function KnowledgePage() {
 
   const search = useMutation({
     mutationFn: ({ text }: { text: string }) =>
-      searchKnowledgeIndex(text, category ? category : undefined, 50),
+      searchKnowledgeIndex(
+        text,
+        category ? category : undefined,
+        50,
+        knowledgeScope,
+      ),
     onSuccess: (data, variables) => {
       setLastSearchQuery(variables.text);
       setSearchResults(data.results);
@@ -399,7 +447,12 @@ export function KnowledgePage() {
 
   const recallTest = useMutation({
     mutationFn: ({ text }: { text: string }) =>
-      searchKnowledgeIndex(text, category ? category : undefined, 20),
+      searchKnowledgeIndex(
+        text,
+        category ? category : undefined,
+        20,
+        knowledgeScope,
+      ),
     onSuccess: (_data, variables) => {
       setLastRecallQuery(variables.text);
     },
@@ -411,6 +464,7 @@ export function KnowledgePage() {
         DEFAULT_RECALL_EVAL_CASES,
         category ? category : undefined,
         10,
+        knowledgeScope,
       ),
   });
 
@@ -429,6 +483,7 @@ export function KnowledgePage() {
         verificationStatus === "human_verified"
           ? "在知识库列表中批量确认。"
           : "在知识库列表中批量标记为无关图片。",
+        knowledgeScope,
       ),
     onSuccess: async () => {
       await queryClient.invalidateQueries({
@@ -489,7 +544,11 @@ export function KnowledgePage() {
   const remove = useMutation({
     mutationFn: async (entry: KnowledgeIndexEntry) => {
       if (entry.evidence_id && entry.applicant_id) {
-        await deleteKnowledgeEvidence(entry.evidence_id, entry.applicant_id);
+        await deleteKnowledgeEvidence(
+          entry.evidence_id,
+          entry.applicant_id,
+          knowledgeScope,
+        );
         return;
       }
       await deleteKnowledgeFile(
@@ -497,6 +556,7 @@ export function KnowledgePage() {
           ? entryPreviewPath(entry)
           : entryFilePath(entry),
         !isGeneratedChunk(entry),
+        knowledgeScope,
       );
     },
     onSuccess: async () => {
@@ -516,6 +576,7 @@ export function KnowledgePage() {
         entryPreviewPath(selected),
         draftContent,
         isGeneratedChunk(selected) ? null : selected.source_anchor,
+        knowledgeScope,
       );
     },
     onSuccess: async () => {
@@ -554,6 +615,19 @@ export function KnowledgePage() {
   );
   const displayedPreviewContent =
     previewMode === "edit" ? draftContent : (preview.data?.content ?? "");
+  const uploadErrorMessage =
+    upload.error instanceof Error
+      ? upload.error.message
+      : "上传失败，请检查文件格式、大小或服务状态后重试。";
+  const ingestErrorMessage =
+    processIncoming.error instanceof Error
+      ? processIncoming.error.message
+      : rebuild.error instanceof Error
+        ? rebuild.error.message
+        : "整理入库失败，请稍后重试。";
+  const hasUploadedDocuments = Boolean(
+    upload.data?.files?.some((file) => !file.evidence_id),
+  );
   const saveErrorMessage =
     savePreview.error instanceof Error
       ? savePreview.error.message
@@ -655,6 +729,17 @@ export function KnowledgePage() {
     recallTest.mutate({ text });
   }
 
+  function selectKnowledgeScope(nextScope: KnowledgeScope) {
+    if (nextScope === "public" && !canManagePublic) return;
+    setKnowledgeScope(nextScope);
+    setCategory("");
+    setQuery("");
+    setSearchResults(null);
+    setLastSearchQuery("");
+    setSelected(null);
+    setPageOffset(0);
+  }
+
   return (
     <main className="codex-main single">
       <div className="kb-view">
@@ -663,38 +748,75 @@ export function KnowledgePage() {
             <div>
               <h1>知识库管理</h1>
             </div>
-            <button
-              type="button"
-              className={`kb-image-model-status ${imageModelSettings.data?.selected_model_valid ? "configured" : "warning"}`}
-              aria-label={
-                imageModelSettings.data?.selected_model_valid
-                  ? `图片识别模型：${imageModelStatus}`
-                  : "图片识别模型未配置"
-              }
-              aria-haspopup="dialog"
-              aria-controls="knowledge-image-model-dialog"
-              onClick={() => {
-                setImageModelDraft(
+            {canManagePublic ? (
+              <button
+                type="button"
+                className={`kb-image-model-status ${imageModelSettings.data?.selected_model_valid ? "configured" : "warning"}`}
+                aria-label={
                   imageModelSettings.data?.selected_model_valid
-                    ? (imageModelSettings.data.selected_model ?? null)
-                    : null,
-                );
-                setImageModelDialogOpen(true);
-              }}
-            >
-              <span
-                className={`kb-image-model-dot${imageModelSettings.data?.selected_model_valid ? "configured" : ""}`}
-                aria-hidden="true"
-              />
-              <strong
-                className="kb-image-model-label"
-                title={`图片识别模型：${imageModelStatus}`}
+                    ? `图片识别模型：${imageModelStatus}`
+                    : "图片识别模型未配置"
+                }
+                aria-haspopup="dialog"
+                aria-controls="knowledge-image-model-dialog"
+                onClick={() => {
+                  setImageModelDraft(
+                    imageModelSettings.data?.selected_model_valid
+                      ? (imageModelSettings.data.selected_model ?? null)
+                      : null,
+                  );
+                  setImageModelDialogOpen(true);
+                }}
               >
-                {imageModelStatus}
-              </strong>
-              <Settings2Icon />
-            </button>
+                <span
+                  className={`kb-image-model-dot${imageModelSettings.data?.selected_model_valid ? "configured" : ""}`}
+                  aria-hidden="true"
+                />
+                <strong
+                  className="kb-image-model-label"
+                  title={`图片识别模型：${imageModelStatus}`}
+                >
+                  {imageModelStatus}
+                </strong>
+                <Settings2Icon />
+              </button>
+            ) : null}
           </section>
+
+          {canManagePublic ? (
+            <div
+              className="kb-scope-tabs"
+              role="tablist"
+              aria-label="知识库层级"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={knowledgeScope === "private"}
+                className={knowledgeScope === "private" ? "active" : ""}
+                onClick={() => selectKnowledgeScope("private")}
+              >
+                <UserRoundIcon aria-hidden="true" />
+                我的知识库
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={knowledgeScope === "public"}
+                className={knowledgeScope === "public" ? "active" : ""}
+                onClick={() => selectKnowledgeScope("public")}
+              >
+                <ShieldCheckIcon aria-hidden="true" />
+                公共知识库
+                <span>管理员</span>
+              </button>
+            </div>
+          ) : (
+            <div className="kb-scope-label" aria-label="当前知识库">
+              <UserRoundIcon aria-hidden="true" />
+              我的知识库
+            </div>
+          )}
 
           <div className="kb-process">
             <article className="kb-card kb-ingest-card">
@@ -703,7 +825,11 @@ export function KnowledgePage() {
                   <UploadIcon />
                 </div>
                 <div>
-                  <div className="kb-card-title">上传政策与材料</div>
+                  <div className="kb-card-title">
+                    {knowledgeScope === "public"
+                      ? "上传公共政策与材料"
+                      : "上传我的知识材料"}
+                  </div>
                 </div>
               </div>
               <button
@@ -714,7 +840,7 @@ export function KnowledgePage() {
                 onDrop={(event) => {
                   event.preventDefault();
                   const files = Array.from(event.dataTransfer.files ?? []);
-                  if (files.length) upload.mutate(files);
+                  if (files.length) startKnowledgeUpload(files);
                 }}
               >
                 <UploadIcon />
@@ -747,12 +873,28 @@ export function KnowledgePage() {
                           ? file.deduplicated
                             ? "证据已存在"
                             : "已加入图片识别队列"
-                          : "已上传"}
+                          : "待整理入库"}
                       </strong>
                     </div>
                   ))}
                 </div>
               ) : null}
+              {upload.isError ? (
+                <div className="kb-error" role="alert">
+                  {uploadErrorMessage}
+                </div>
+              ) : null}
+              {hasUploadedDocuments ? (
+                <div className="upload-status-note">
+                  DOCX
+                  等文档已保存到待整理区。请点击“整理入库并构建索引”，完成后即可在我的知识库中查看。
+                </div>
+              ) : null}
+              {upload.data?.warnings?.map((warning) => (
+                <div key={warning} className="upload-status-note warning">
+                  {warning}
+                </div>
+              ))}
 
               <div className="kb-ingest-actions">
                 <button
@@ -782,6 +924,11 @@ export function KnowledgePage() {
                   仅重建索引
                 </button>
               </div>
+              {processIncoming.isError || rebuild.isError ? (
+                <div className="kb-error" role="alert">
+                  {ingestErrorMessage}
+                </div>
+              ) : null}
               <div className="progress-bar">
                 <div
                   className="progress-fill"
@@ -1319,7 +1466,10 @@ export function KnowledgePage() {
                         onClick={async () => {
                           const sourcePath = entryFilePath(selected);
                           downloadBlob(
-                            await downloadKnowledgeFile(sourcePath),
+                            await downloadKnowledgeFile(
+                              sourcePath,
+                              knowledgeScope,
+                            ),
                             fileName(sourcePath),
                           );
                         }}
@@ -1381,7 +1531,7 @@ export function KnowledgePage() {
         hidden
         onChange={(event) => {
           const files = Array.from(event.target.files ?? []);
-          if (files.length) upload.mutate(files);
+          if (files.length) startKnowledgeUpload(files);
           event.currentTarget.value = "";
         }}
       />

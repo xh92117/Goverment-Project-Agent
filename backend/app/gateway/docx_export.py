@@ -71,6 +71,23 @@ class DocxImage:
     description: str
 
 
+@dataclass(frozen=True)
+class DocxFormatOptions:
+    body_font: str = "仿宋"
+    body_font_size_pt: float = 12.0
+    line_spacing: float = 1.5
+    heading_font: str = "黑体"
+    heading_start_level: int = 1
+
+    @property
+    def body_size_half_points(self) -> int:
+        return max(16, min(48, round(self.body_font_size_pt * 2)))
+
+    @property
+    def line_spacing_twips(self) -> int:
+        return max(240, min(720, round(self.line_spacing * 240)))
+
+
 MarkdownBlock = ParagraphBlock | TableBlock | ImageBlock | EquationBlock
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
@@ -155,6 +172,7 @@ def build_markdown_docx(
     *,
     base_dir: Path | None = None,
     include_title: bool = False,
+    format_options: DocxFormatOptions | None = None,
 ) -> bytes:
     """Build a formatted proposal DOCX from Markdown content."""
 
@@ -164,7 +182,13 @@ def build_markdown_docx(
         blocks.append(ParagraphBlock(_strip_markdown_inline(title), "h1"))
     blocks.extend(_blocks_from_markdown(cleaned_markdown))
     _append_cited_evidence_images(blocks, cited_evidence_ids)
-    return _build_docx_package(title or "申报书", _normalize_headings(blocks), base_dir=base_dir)
+    heading_start_level = format_options.heading_start_level if format_options else 1
+    return _build_docx_package(
+        title or "申报书",
+        _normalize_headings(blocks, heading_start_level=heading_start_level),
+        base_dir=base_dir,
+        format_options=format_options,
+    )
 
 
 def build_conversation_docx(title: str, messages: list[Any]) -> bytes:
@@ -384,26 +408,38 @@ def _is_table_separator(cells: list[str]) -> bool:
     return all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in cells)
 
 
-def _normalize_headings(blocks: list[MarkdownBlock]) -> list[MarkdownBlock]:
+def _normalize_headings(
+    blocks: list[MarkdownBlock],
+    *,
+    heading_start_level: int = 1,
+) -> list[MarkdownBlock]:
     normalized: list[MarkdownBlock] = []
     for block in blocks:
         if not isinstance(block, ParagraphBlock) or block.kind not in {"h1", "h2", "h3", "h4", "h5", "h6"}:
             normalized.append(block)
             continue
         text = _HEADING_NUMBER_RE.sub("", block.text).strip()
-        normalized.append(ParagraphBlock(text, block.kind))
+        original_level = int(block.kind[1])
+        shifted_level = min(6, original_level + max(1, heading_start_level) - 1)
+        normalized.append(ParagraphBlock(text, f"h{shifted_level}"))  # type: ignore[arg-type]
     return normalized
 
 
-def _build_docx_package(title: str, blocks: list[MarkdownBlock], *, base_dir: Path | None) -> bytes:
-    body, images = _body_xml(blocks, base_dir=base_dir)
+def _build_docx_package(
+    title: str,
+    blocks: list[MarkdownBlock],
+    *,
+    base_dir: Path | None,
+    format_options: DocxFormatOptions | None = None,
+) -> bytes:
+    body, images = _body_xml(blocks, base_dir=base_dir, format_options=format_options)
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("[Content_Types].xml", _content_types_xml(images))
         archive.writestr("_rels/.rels", _rels_xml())
         archive.writestr("word/_rels/document.xml.rels", _document_rels_xml(images))
         archive.writestr("word/document.xml", _document_xml(body))
-        archive.writestr("word/styles.xml", _styles_xml())
+        archive.writestr("word/styles.xml", _styles_xml(format_options))
         archive.writestr("word/numbering.xml", _numbering_xml())
         archive.writestr("docProps/core.xml", _core_xml(title))
         archive.writestr("docProps/app.xml", _app_xml())
@@ -412,21 +448,26 @@ def _build_docx_package(title: str, blocks: list[MarkdownBlock], *, base_dir: Pa
     return buffer.getvalue()
 
 
-def _body_xml(blocks: list[MarkdownBlock], *, base_dir: Path | None) -> tuple[str, list[DocxImage]]:
+def _body_xml(
+    blocks: list[MarkdownBlock],
+    *,
+    base_dir: Path | None,
+    format_options: DocxFormatOptions | None = None,
+) -> tuple[str, list[DocxImage]]:
     images: list[DocxImage] = []
     parts: list[str] = []
     for block in blocks:
         if isinstance(block, ParagraphBlock):
-            parts.append(_paragraph(block))
+            parts.append(_paragraph(block, format_options))
         elif isinstance(block, TableBlock):
-            parts.append(_table(block))
+            parts.append(_table(block, format_options))
         elif isinstance(block, EquationBlock):
             parts.append(_equation_paragraph(block.latex))
         elif isinstance(block, ImageBlock):
             image = _load_image(block, base_dir=base_dir, index=len(images) + 1)
             if image is None:
                 label = block.alt or block.target
-                parts.append(_paragraph(ParagraphBlock(f"[图片：{label}]", "image_placeholder")))
+                parts.append(_paragraph(ParagraphBlock(f"[图片：{label}]", "image_placeholder"), format_options))
             else:
                 images.append(image)
                 parts.append(_image_paragraph(image, len(images)))
@@ -556,49 +597,65 @@ def _runs_with_inline_math(text: str, *, size: int, east_asia_font: str, ascii_f
     return _runs_with_inline_markdown(text, size=size, east_asia_font=east_asia_font, ascii_font=ascii_font)
 
 
-def _paragraph(block: ParagraphBlock) -> str:
+def _paragraph(
+    block: ParagraphBlock,
+    format_options: DocxFormatOptions | None = None,
+) -> str:
     if block.kind in {"h1", "h2", "h3", "h4", "h5", "h6"}:
-        return _heading_paragraph(block)
+        return _heading_paragraph(block, format_options)
+    heading_font = format_options.heading_font if format_options else _FONT_HEADING_EAST_ASIA
     if block.kind == "table_caption":
         props = '<w:jc w:val="center"/><w:spacing w:line="240" w:lineRule="auto" w:before="120"/>'
-        return f"<w:p><w:pPr>{props}</w:pPr>{_run(block.text, size=_CAPTION_SIZE, east_asia_font=_FONT_HEADING_EAST_ASIA)}</w:p>"
+        return f"<w:p><w:pPr>{props}</w:pPr>{_run(block.text, size=_CAPTION_SIZE, east_asia_font=heading_font)}</w:p>"
     if block.kind == "figure_caption":
         props = '<w:jc w:val="center"/><w:spacing w:line="240" w:lineRule="auto" w:after="120"/>'
-        return f"<w:p><w:pPr>{props}</w:pPr>{_run(block.text, size=_CAPTION_SIZE, east_asia_font=_FONT_HEADING_EAST_ASIA)}</w:p>"
+        return f"<w:p><w:pPr>{props}</w:pPr>{_run(block.text, size=_CAPTION_SIZE, east_asia_font=heading_font)}</w:p>"
     if block.kind == "image_placeholder":
         props = '<w:jc w:val="center"/><w:spacing w:line="240" w:lineRule="auto"/>'
-        return f"<w:p><w:pPr>{props}</w:pPr>{_run(block.text, size=_CAPTION_SIZE, east_asia_font=_FONT_HEADING_EAST_ASIA)}</w:p>"
+        return f"<w:p><w:pPr>{props}</w:pPr>{_run(block.text, size=_CAPTION_SIZE, east_asia_font=heading_font)}</w:p>"
 
     if block.kind in {"bullet", "numbered"}:
-        return _list_paragraph(block)
+        return _list_paragraph(block, format_options)
 
-    props = '<w:jc w:val="both"/><w:spacing w:line="360" w:lineRule="auto"/><w:ind w:firstLine="480"/>'
+    body_font = format_options.body_font if format_options else _FONT_BODY_EAST_ASIA
+    body_size = format_options.body_size_half_points if format_options else _BODY_SIZE
+    line_spacing = format_options.line_spacing_twips if format_options else 360
+    props = f'<w:jc w:val="both"/><w:spacing w:line="{line_spacing}" w:lineRule="auto"/><w:ind w:firstLine="480"/>'
     runs = _runs_with_inline_math(
         block.text,
-        size=_BODY_SIZE,
-        east_asia_font=_FONT_BODY_EAST_ASIA,
+        size=body_size,
+        east_asia_font=body_font,
         ascii_font=_FONT_BODY_ASCII,
     )
     return f"<w:p><w:pPr>{props}</w:pPr>{runs}</w:p>"
 
 
-def _list_paragraph(block: ParagraphBlock) -> str:
+def _list_paragraph(
+    block: ParagraphBlock,
+    format_options: DocxFormatOptions | None = None,
+) -> str:
     num_id = 2 if block.kind == "bullet" else 3
+    line_spacing = format_options.line_spacing_twips if format_options else 290
+    body_font = format_options.body_font if format_options else _FONT_BODY_EAST_ASIA
+    body_size = format_options.body_size_half_points if format_options else _BODY_SIZE
     props = (
         f'<w:numPr><w:ilvl w:val="0"/><w:numId w:val="{num_id}"/></w:numPr>'
-        '<w:spacing w:line="290" w:lineRule="auto" w:after="80"/>'
+        f'<w:spacing w:line="{line_spacing}" w:lineRule="auto" w:after="80"/>'
         '<w:ind w:left="540" w:hanging="280"/>'
     )
     runs = _runs_with_inline_math(
         block.text,
-        size=_BODY_SIZE,
-        east_asia_font=_FONT_BODY_EAST_ASIA,
+        size=body_size,
+        east_asia_font=body_font,
         ascii_font=_FONT_BODY_ASCII,
     )
     return f"<w:p><w:pPr>{props}</w:pPr>{runs}</w:p>"
 
 
-def _heading_paragraph(block: ParagraphBlock) -> str:
+def _heading_paragraph(
+    block: ParagraphBlock,
+    format_options: DocxFormatOptions | None = None,
+) -> str:
     level = int(block.kind[1])
     style_id = f"Heading{level}"
     ilvl = level - 1
@@ -609,37 +666,45 @@ def _heading_paragraph(block: ParagraphBlock) -> str:
         f'<w:numPr><w:ilvl w:val="{ilvl}"/><w:numId w:val="1"/></w:numPr>'
         f'<w:spacing w:line="320" w:lineRule="auto" w:before="{before}" w:after="{after}"/>'
     )
-    if block.kind in {"h1", "h2"}:
-        run = _run(block.text, size=size, east_asia_font=_FONT_HEADING_EAST_ASIA, ascii_font=_FONT_HEADING_EAST_ASIA)
+    heading_font = format_options.heading_font if format_options else _FONT_HEADING_EAST_ASIA
+    body_font = format_options.body_font if format_options else _FONT_BODY_EAST_ASIA
+    if format_options is not None or block.kind in {"h1", "h2"}:
+        run = _run(block.text, size=size, east_asia_font=heading_font, ascii_font=heading_font)
     else:
         run = _run(
             block.text,
             size=size,
-            east_asia_font=_FONT_BODY_EAST_ASIA,
+            east_asia_font=body_font,
             ascii_font=_FONT_BODY_ASCII,
             bold=level <= 4,
         )
     return f"<w:p><w:pPr>{props}</w:pPr>{run}</w:p>"
 
 
-def _table(block: TableBlock) -> str:
+def _table(
+    block: TableBlock,
+    format_options: DocxFormatOptions | None = None,
+) -> str:
     if not block.rows:
         return ""
     columns = max(len(row) for row in block.rows)
     column_widths = _table_column_widths(block.rows, columns)
     grid = "".join(f'<w:gridCol w:w="{width}"/>' for width in column_widths)
     rows: list[str] = []
+    heading_font = format_options.heading_font if format_options else _FONT_HEADING_EAST_ASIA
+    body_font = format_options.body_font if format_options else _FONT_BODY_EAST_ASIA
+    table_line_spacing = format_options.line_spacing_twips if format_options else 260
     for row_index, row in enumerate(block.rows):
         cells: list[str] = []
         is_header = row_index == 0
         for width, value in zip(column_widths, [*row, *([""] * (columns - len(row)))], strict=False):
             align = "center" if is_header or _is_short_table_value(value) else "left"
-            paragraph_props = f'<w:jc w:val="{align}"/><w:spacing w:line="260" w:lineRule="auto"/>'
+            paragraph_props = f'<w:jc w:val="{align}"/><w:spacing w:line="{table_line_spacing}" w:lineRule="auto"/>'
             if is_header:
                 runs = _run(
                     _strip_markdown_inline(value),
                     size=_TABLE_SIZE,
-                    east_asia_font=_FONT_HEADING_EAST_ASIA,
+                    east_asia_font=heading_font,
                     ascii_font=_FONT_BODY_ASCII,
                     bold=True,
                 )
@@ -647,7 +712,7 @@ def _table(block: TableBlock) -> str:
                 runs = _runs_with_inline_math(
                     value,
                     size=_TABLE_SIZE,
-                    east_asia_font=_FONT_BODY_EAST_ASIA,
+                    east_asia_font=body_font,
                     ascii_font=_FONT_BODY_ASCII,
                 )
             paragraph = f"<w:p><w:pPr>{paragraph_props}</w:pPr>{runs}</w:p>"
@@ -899,7 +964,12 @@ def _style_run_props(east_asia_font: str, size: int, *, ascii_font: str | None =
     )
 
 
-def _heading_style(style_id: str, name: str, level: int, east_asia_font: str) -> str:
+def _heading_style(
+    style_id: str,
+    name: str,
+    level: int,
+    east_asia_font: str,
+) -> str:
     outline_level = level - 1
     size = _HEADING_SIZES.get(level, _BODY_SIZE)
     before, after = _HEADING_SPACING.get(level, (80, 40))
@@ -916,25 +986,29 @@ def _heading_style(style_id: str, name: str, level: int, east_asia_font: str) ->
     )
 
 
-def _styles_xml() -> str:
+def _styles_xml(format_options: DocxFormatOptions | None = None) -> str:
+    body_font = format_options.body_font if format_options else _FONT_BODY_EAST_ASIA
+    heading_font = format_options.heading_font if format_options else _FONT_HEADING_EAST_ASIA
+    body_size = format_options.body_size_half_points if format_options else _BODY_SIZE
+    line_spacing = format_options.line_spacing_twips if format_options else 360
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
         '<w:docDefaults><w:rPrDefault>'
-        f'{_style_run_props(_FONT_BODY_EAST_ASIA, _BODY_SIZE, ascii_font=_FONT_BODY_ASCII)}'
+        f'{_style_run_props(body_font, body_size, ascii_font=_FONT_BODY_ASCII)}'
         '</w:rPrDefault><w:pPrDefault>'
-        '<w:pPr><w:jc w:val="both"/><w:spacing w:line="360" w:lineRule="auto"/></w:pPr>'
+        f'<w:pPr><w:jc w:val="both"/><w:spacing w:line="{line_spacing}" w:lineRule="auto"/></w:pPr>'
         '</w:pPrDefault></w:docDefaults>'
         '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
         '<w:name w:val="Normal"/><w:qFormat/>'
-        '<w:pPr><w:jc w:val="both"/><w:spacing w:line="360" w:lineRule="auto"/></w:pPr>'
-        f'{_style_run_props(_FONT_BODY_EAST_ASIA, _BODY_SIZE, ascii_font=_FONT_BODY_ASCII)}</w:style>'
-        f'{_heading_style("Heading1", "heading 1", 1, _FONT_HEADING_EAST_ASIA)}'
-        f'{_heading_style("Heading2", "heading 2", 2, _FONT_HEADING_EAST_ASIA)}'
-        f'{_heading_style("Heading3", "heading 3", 3, _FONT_BODY_EAST_ASIA)}'
-        f'{_heading_style("Heading4", "heading 4", 4, _FONT_BODY_EAST_ASIA)}'
-        f'{_heading_style("Heading5", "heading 5", 5, _FONT_BODY_EAST_ASIA)}'
-        f'{_heading_style("Heading6", "heading 6", 6, _FONT_BODY_EAST_ASIA)}'
+        f'<w:pPr><w:jc w:val="both"/><w:spacing w:line="{line_spacing}" w:lineRule="auto"/></w:pPr>'
+        f'{_style_run_props(body_font, body_size, ascii_font=_FONT_BODY_ASCII)}</w:style>'
+        f'{_heading_style("Heading1", "heading 1", 1, heading_font)}'
+        f'{_heading_style("Heading2", "heading 2", 2, heading_font)}'
+        f'{_heading_style("Heading3", "heading 3", 3, heading_font if format_options else body_font)}'
+        f'{_heading_style("Heading4", "heading 4", 4, heading_font if format_options else body_font)}'
+        f'{_heading_style("Heading5", "heading 5", 5, heading_font if format_options else body_font)}'
+        f'{_heading_style("Heading6", "heading 6", 6, heading_font if format_options else body_font)}'
         "</w:styles>"
     )
 

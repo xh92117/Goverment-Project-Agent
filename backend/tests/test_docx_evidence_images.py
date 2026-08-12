@@ -5,7 +5,7 @@ from zipfile import ZipFile
 import pytest
 from PIL import Image
 
-from app.gateway.docx_export import build_conversation_docx, build_markdown_docx
+from app.gateway.docx_export import DocxFormatOptions, build_conversation_docx, build_markdown_docx
 from deerflow.knowledge import assets as knowledge_assets
 from deerflow.knowledge import storage as knowledge_storage
 from deerflow.knowledge.schemas import KnowledgeEvidencePatch
@@ -53,6 +53,32 @@ def _create_evidence(*, applicant_id: str = "default", verified: bool) -> str:
 def _package_parts(data: bytes) -> tuple[list[str], str]:
     with ZipFile(io.BytesIO(data)) as archive:
         return archive.namelist(), archive.read("word/document.xml").decode("utf-8")
+
+
+def test_manual_word_format_changes_fonts_spacing_size_and_heading_level() -> None:
+    data = build_markdown_docx(
+        "Proposal",
+        "# Top heading\n\nBody text.",
+        format_options=DocxFormatOptions(
+            body_font="宋体",
+            body_font_size_pt=14,
+            line_spacing=2,
+            heading_font="楷体",
+            heading_start_level=2,
+        ),
+    )
+
+    with ZipFile(io.BytesIO(data)) as archive:
+        document_xml = archive.read("word/document.xml").decode("utf-8")
+        styles_xml = archive.read("word/styles.xml").decode("utf-8")
+
+    assert '<w:pStyle w:val="Heading2"/>' in document_xml
+    assert 'w:eastAsia="宋体"' in document_xml
+    assert 'w:sz w:val="28"' in document_xml
+    assert 'w:line="480"' in document_xml
+    assert 'w:eastAsia="楷体"' in document_xml
+    assert 'w:eastAsia="宋体"' in styles_xml
+    assert 'w:eastAsia="楷体"' in styles_xml
 
 
 def test_verified_evidence_uri_is_embedded_in_docx() -> None:

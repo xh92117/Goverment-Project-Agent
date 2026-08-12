@@ -20,9 +20,10 @@ from deerflow.knowledge import (
     organize_options_from_config,
     read_knowledge_file_combined,
     search_knowledge_evidence,
+    search_knowledge_index_entries,
     search_knowledge_index_entries_combined,
 )
-from deerflow.runtime.user_context import get_effective_user_id
+from deerflow.runtime.user_context import get_current_user, get_effective_user_id, strict_user_context_enabled
 
 
 def _json(data: object) -> str:
@@ -34,6 +35,13 @@ def _compact(value: str | None, *, limit: int = 240) -> str:
     if len(text) <= limit:
         return text
     return f"{text[:limit].rstrip()}..."
+
+
+def _can_access_public_knowledge() -> bool:
+    user = get_current_user()
+    if user is None:
+        return not strict_user_context_enabled()
+    return getattr(user, "system_role", None) == "admin"
 
 
 @tool("knowledge_search_index", parse_docstring=True)
@@ -74,25 +82,32 @@ def knowledge_search_index_tool(
         applicant_ids: Optional applicant-owner filter for applicant-specific evidence.
         limit: Maximum number of index results to return.
     """
-    response = search_knowledge_index_entries_combined(
-        KnowledgeIndexSearchRequest(
-            query=query,
-            query_variants=query_variants or [],
-            entry_types=entry_types,
-            categories=categories,
-            applicable_chapters=applicable_chapters,
-            domains=domains,
-            project_types=project_types,
-            authorities=authorities,
-            document_types=document_types,
-            years=years,
-            valid_on=valid_on,
-            applicant_ids=applicant_ids,
-            search_mode="keyword",
-            limit=max(1, min(limit, 50)),
-        ),
-        user_id=get_effective_user_id(),
+    request = KnowledgeIndexSearchRequest(
+        query=query,
+        query_variants=query_variants or [],
+        entry_types=entry_types,
+        categories=categories,
+        applicable_chapters=applicable_chapters,
+        domains=domains,
+        project_types=project_types,
+        authorities=authorities,
+        document_types=document_types,
+        years=years,
+        valid_on=valid_on,
+        applicant_ids=applicant_ids,
+        search_mode="keyword",
+        limit=max(1, min(limit, 50)),
     )
+    if _can_access_public_knowledge():
+        response = search_knowledge_index_entries_combined(
+            request,
+            user_id=get_effective_user_id(),
+        )
+    else:
+        response = search_knowledge_index_entries(
+            request,
+            user_id=get_effective_user_id(),
+        )
     if not response.results:
         return "Knowledge index search found no matching entries.\nAnswer from general reasoning only if appropriate, and clearly state that no knowledge-base evidence was found."
 
@@ -158,6 +173,10 @@ def knowledge_read_file_tool(
         max_chars: Maximum characters to return.
         scope: Source scope from search results: public, private, or auto.
     """
+    if not _can_access_public_knowledge():
+        if scope == "public":
+            raise PermissionError("Public knowledge is restricted to system administrators.")
+        scope = "private"
     response = read_knowledge_file_combined(
         KnowledgeFileReadRequest(
             file_path=file_path,

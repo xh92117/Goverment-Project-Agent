@@ -256,6 +256,14 @@ export async function downloadProjectFile(
   return response.blob();
 }
 
+export interface WordFormatOptions {
+  bodyFont: string;
+  bodyFontSizePt: number;
+  lineSpacing: number;
+  headingFont: string;
+  headingStartLevel: number;
+}
+
 export async function exportProjectFilesDocx(
   projectId: string,
   files: Array<
@@ -263,7 +271,11 @@ export async function exportProjectFilesDocx(
   >,
   mode: "merged" | "separate",
   title?: string,
-  options: { includeImages?: boolean; modelName?: string } = {},
+  options: {
+    includeImages?: boolean;
+    modelName?: string;
+    wordFormat?: WordFormatOptions;
+  } = {},
 ) {
   const response = await apiFetch(
     `/api/projects/${encodeURIComponent(projectId)}/files/export-docx`,
@@ -282,6 +294,15 @@ export async function exportProjectFilesDocx(
         include_images: options.includeImages ?? false,
         applicant_id: "default",
         model_name: options.modelName ?? undefined,
+        word_format: options.wordFormat
+          ? {
+              body_font: options.wordFormat.bodyFont,
+              body_font_size_pt: options.wordFormat.bodyFontSizePt,
+              line_spacing: options.wordFormat.lineSpacing,
+              heading_font: options.wordFormat.headingFont,
+              heading_start_level: options.wordFormat.headingStartLevel,
+            }
+          : undefined,
       }),
     },
   );

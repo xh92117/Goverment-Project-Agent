@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ChevronDownIcon,
   DownloadIcon,
   FileIcon,
   FolderIcon,
@@ -13,6 +14,7 @@ import {
   PanelRightOpenIcon,
   PencilIcon,
   RefreshCwIcon,
+  RotateCcwIcon,
   SaveIcon,
   SendIcon,
   SquareIcon,
@@ -58,7 +60,10 @@ import {
   uploadProjectFiles,
   writeProjectFile,
 } from "@/features/projects/api";
-import type { ProjectFileNode } from "@/features/projects/api";
+import type {
+  ProjectFileNode,
+  WordFormatOptions,
+} from "@/features/projects/api";
 import { loadModels } from "@/features/settings/api";
 import { formatDateTime } from "@/shared/lib/format";
 import { createId } from "@/shared/lib/ids";
@@ -81,6 +86,16 @@ const RIGHT_SIDEBAR_COLLAPSED_STORAGE_KEY = "project-sidebar-right-collapsed";
 const RIGHT_SIDEBAR_DEFAULT_WIDTH = 340;
 const RIGHT_SIDEBAR_MIN_WIDTH = 280;
 const RIGHT_SIDEBAR_MAX_WIDTH = 620;
+
+const DEFAULT_WORD_FORMAT: WordFormatOptions = {
+  bodyFont: "仿宋",
+  bodyFontSizePt: 12,
+  lineSpacing: 1.5,
+  headingFont: "黑体",
+  headingStartLevel: 1,
+};
+
+const WORD_FONT_OPTIONS = ["仿宋", "宋体", "黑体", "楷体", "微软雅黑"];
 
 function clampRightSidebarWidth(width: number) {
   return Math.min(
@@ -183,6 +198,10 @@ export function ProjectWorkspacePage({
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [exportMode, setExportMode] = useState<"merged" | "separate">("merged");
   const [includeImages, setIncludeImages] = useState(false);
+  const [wordFormat, setWordFormat] = useState<WordFormatOptions>({
+    ...DEFAULT_WORD_FORMAT,
+  });
+  const [wordFormatCustomized, setWordFormatCustomized] = useState(false);
   const [exportSelectedIds, setExportSelectedIds] = useState<Set<string>>(
     new Set(),
   );
@@ -524,14 +543,17 @@ export function ProjectWorkspacePage({
       items,
       mode,
       includeImages,
+      wordFormat,
     }: {
       items: ProjectFileNode[];
       mode: "merged" | "separate";
       includeImages: boolean;
+      wordFormat?: WordFormatOptions;
     }) =>
       exportProjectFilesDocx(projectId, items, mode, project.data?.name, {
         includeImages,
         modelName: selectedModel.trim() ? selectedModel : undefined,
+        wordFormat,
       }),
     onSuccess: (blob, variables) => {
       const baseName = project.data?.name?.trim() ?? "项目文件导出";
@@ -648,7 +670,17 @@ export function ProjectWorkspacePage({
     setExportSelectedIds(new Set(defaults.map((file) => file.id)));
     setExportMode("merged");
     setIncludeImages(false);
+    setWordFormat({ ...DEFAULT_WORD_FORMAT });
+    setWordFormatCustomized(false);
     setExportDialogOpen(true);
+  }
+
+  function updateWordFormat<Key extends keyof WordFormatOptions>(
+    key: Key,
+    value: WordFormatOptions[Key],
+  ) {
+    setWordFormat((current) => ({ ...current, [key]: value }));
+    setWordFormatCustomized(true);
   }
 
   function toggleExportFile(fileId: string) {
@@ -1299,6 +1331,125 @@ export function ProjectWorkspacePage({
                     </button>
                   </div>
                 </div>
+
+                <details className="export-word-settings">
+                  <summary>
+                    <span>
+                      <strong>Word 格式设置</strong>
+                      <small>
+                        {wordFormatCustomized
+                          ? "已启用手动设置"
+                          : "使用当前默认导出格式"}
+                      </small>
+                    </span>
+                    <ChevronDownIcon size={17} aria-hidden="true" />
+                  </summary>
+                  <div className="export-word-settings-body">
+                    <p>
+                      仅在修改下列参数后应用手动格式；不修改时保持当前默认格式。
+                    </p>
+                    <div className="export-word-settings-grid">
+                      <label>
+                        <span>正文字体</span>
+                        <select
+                          value={wordFormat.bodyFont}
+                          disabled={exportFiles.isPending}
+                          onChange={(event) =>
+                            updateWordFormat("bodyFont", event.target.value)
+                          }
+                        >
+                          {WORD_FONT_OPTIONS.map((font) => (
+                            <option key={font} value={font}>
+                              {font}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>正文字号</span>
+                        <select
+                          value={wordFormat.bodyFontSizePt}
+                          disabled={exportFiles.isPending}
+                          onChange={(event) =>
+                            updateWordFormat(
+                              "bodyFontSizePt",
+                              Number(event.target.value),
+                            )
+                          }
+                        >
+                          <option value={10.5}>五号（10.5 磅）</option>
+                          <option value={12}>小四（12 磅）</option>
+                          <option value={14}>四号（14 磅）</option>
+                          <option value={15}>小三（15 磅）</option>
+                          <option value={16}>三号（16 磅）</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>行间距</span>
+                        <select
+                          value={wordFormat.lineSpacing}
+                          disabled={exportFiles.isPending}
+                          onChange={(event) =>
+                            updateWordFormat(
+                              "lineSpacing",
+                              Number(event.target.value),
+                            )
+                          }
+                        >
+                          <option value={1}>单倍行距</option>
+                          <option value={1.25}>1.25 倍行距</option>
+                          <option value={1.5}>1.5 倍行距</option>
+                          <option value={2}>2 倍行距</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>标题字体</span>
+                        <select
+                          value={wordFormat.headingFont}
+                          disabled={exportFiles.isPending}
+                          onChange={(event) =>
+                            updateWordFormat("headingFont", event.target.value)
+                          }
+                        >
+                          {WORD_FONT_OPTIONS.map((font) => (
+                            <option key={font} value={font}>
+                              {font}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>标题起始等级</span>
+                        <select
+                          value={wordFormat.headingStartLevel}
+                          disabled={exportFiles.isPending}
+                          onChange={(event) =>
+                            updateWordFormat(
+                              "headingStartLevel",
+                              Number(event.target.value),
+                            )
+                          }
+                        >
+                          <option value={1}>一级标题</option>
+                          <option value={2}>二级标题</option>
+                          <option value={3}>三级标题</option>
+                        </select>
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      className="export-word-settings-reset"
+                      disabled={exportFiles.isPending || !wordFormatCustomized}
+                      onClick={() => {
+                        setWordFormat({ ...DEFAULT_WORD_FORMAT });
+                        setWordFormatCustomized(false);
+                      }}
+                    >
+                      <RotateCcwIcon size={14} />
+                      恢复默认格式
+                    </button>
+                  </div>
+                </details>
               </section>
             </div>
 
@@ -1324,6 +1475,7 @@ export function ProjectWorkspacePage({
                     items: selectedExportFiles,
                     mode: exportMode,
                     includeImages,
+                    wordFormat: wordFormatCustomized ? wordFormat : undefined,
                   });
                 }}
               >

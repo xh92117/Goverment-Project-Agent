@@ -221,6 +221,9 @@ export interface KnowledgeImageModelCreateRequest {
   url?: string;
 }
 
+export type KnowledgeScope = "private" | "public";
+export type KnowledgeReadScope = "auto" | KnowledgeScope;
+
 export function loadKnowledgeImageModelSettings() {
   return apiJson<KnowledgeImageModelSettings>(
     "/api/settings/knowledge-image-model",
@@ -266,10 +269,15 @@ export function deleteKnowledgeDocument(documentId: string) {
   );
 }
 
-export function deleteKnowledgeFile(filePath: string, deleteSource = true) {
+export function deleteKnowledgeFile(
+  filePath: string,
+  deleteSource = true,
+  scope: KnowledgeScope = "private",
+) {
   const params = new URLSearchParams({
     file_path: filePath,
     delete_source: String(deleteSource),
+    scope,
   });
   return apiJson<KnowledgeFileDeleteResult>(`/api/knowledge/files?${params}`, {
     method: "DELETE",
@@ -279,8 +287,9 @@ export function deleteKnowledgeFile(filePath: string, deleteSource = true) {
 export function deleteKnowledgeEvidence(
   evidenceId: string,
   applicantId: string,
+  scope: KnowledgeScope = "private",
 ) {
-  const params = new URLSearchParams({ applicant_id: applicantId });
+  const params = new URLSearchParams({ applicant_id: applicantId, scope });
   return apiJson<{
     success: boolean;
     evidence_id: string;
@@ -290,10 +299,15 @@ export function deleteKnowledgeEvidence(
   });
 }
 
-export function listKnowledgeEvidence(applicantId: string, query = "") {
+export function listKnowledgeEvidence(
+  applicantId: string,
+  query = "",
+  scope: KnowledgeScope = "private",
+) {
   const params = new URLSearchParams({
     applicant_id: applicantId,
     limit: "100",
+    scope,
   });
   if (query.trim()) params.set("query", query.trim());
   return apiJson<KnowledgeEvidence[]>(`/api/knowledge/evidence?${params}`);
@@ -303,8 +317,9 @@ export function updateKnowledgeEvidence(
   evidenceId: string,
   applicantId: string,
   patch: KnowledgeEvidencePatch,
+  scope: KnowledgeScope = "private",
 ) {
-  const params = new URLSearchParams({ applicant_id: applicantId });
+  const params = new URLSearchParams({ applicant_id: applicantId, scope });
   return apiJson<KnowledgeEvidence>(
     `/api/knowledge/evidence/${encodeURIComponent(evidenceId)}?${params}`,
     { method: "PATCH", body: jsonBody(patch) },
@@ -314,8 +329,9 @@ export function updateKnowledgeEvidence(
 export function extractKnowledgeEvidence(
   evidenceId: string,
   applicantId: string,
+  scope: KnowledgeScope = "private",
 ) {
-  const params = new URLSearchParams({ applicant_id: applicantId });
+  const params = new URLSearchParams({ applicant_id: applicantId, scope });
   return apiJson<KnowledgeEvidence>(
     `/api/knowledge/evidence/${encodeURIComponent(evidenceId)}/extract?${params}`,
     { method: "POST" },
@@ -327,11 +343,12 @@ export function batchReviewKnowledgeEvidence(
   verificationStatus: "human_verified" | "rejected",
   applicantId = "default",
   reviewNotes = "",
+  scope: KnowledgeScope = "private",
 ) {
   return apiJson<{
     updated: KnowledgeEvidence[];
     skipped: Record<string, string>;
-  }>("/api/knowledge/evidence/batch-review", {
+  }>(`/api/knowledge/evidence/batch-review?scope=${scope}`, {
     method: "POST",
     body: jsonBody({
       applicant_id: applicantId,
@@ -346,15 +363,20 @@ export function knowledgeAssetContentUrl(
   assetId: string,
   applicantId: string,
   thumbnail = false,
+  scope: KnowledgeScope = "private",
 ) {
-  const params = new URLSearchParams({ applicant_id: applicantId });
+  const params = new URLSearchParams({ applicant_id: applicantId, scope });
   if (thumbnail) params.set("thumbnail", "true");
   return `/api/knowledge/assets/${encodeURIComponent(assetId)}/content?${params}`;
 }
 
-export function listKnowledgeIndex(category?: string) {
-  const suffix = category ? `?category=${encodeURIComponent(category)}` : "";
-  return apiJson<KnowledgeIndexEntry[]>(`/api/knowledge/index${suffix}`);
+export function listKnowledgeIndex(
+  category?: string,
+  scope: KnowledgeScope = "private",
+) {
+  const params = new URLSearchParams({ scope });
+  if (category) params.set("category", category);
+  return apiJson<KnowledgeIndexEntry[]>(`/api/knowledge/index?${params}`);
 }
 
 export function listKnowledgeIndexPage(
@@ -362,27 +384,32 @@ export function listKnowledgeIndexPage(
   offset = 0,
   limit = 100,
   query = "",
+  scope: KnowledgeScope = "private",
 ) {
-  return apiJson<KnowledgeIndexPageResult>("/api/knowledge/index/page", {
-    method: "POST",
-    body: jsonBody({
-      category: category ?? null,
-      offset,
-      limit,
-      query,
-    }),
-  });
+  return apiJson<KnowledgeIndexPageResult>(
+    `/api/knowledge/index/page?scope=${scope}`,
+    {
+      method: "POST",
+      body: jsonBody({
+        category: category ?? null,
+        offset,
+        limit,
+        query,
+      }),
+    },
+  );
 }
 
 export function searchKnowledgeIndex(
   query: string,
   category?: string,
   limit = 20,
+  scope: KnowledgeScope = "private",
 ) {
   return apiJson<{
     results: KnowledgeIndexSearchHit[];
     count?: number;
-  }>("/api/knowledge/index/search", {
+  }>(`/api/knowledge/index/search?scope=${scope}`, {
     method: "POST",
     body: jsonBody({
       query,
@@ -397,21 +424,29 @@ export function evaluateKnowledgeRecall(
   cases: KnowledgeRecallEvalCase[],
   category?: string,
   limit = 10,
+  scope: KnowledgeScope = "private",
 ) {
-  return apiJson<KnowledgeRecallEvalResult>("/api/knowledge/index/evaluate", {
-    method: "POST",
-    body: jsonBody({
-      cases,
-      category: category ?? null,
-      limit,
-      search_mode: "hybrid",
-    }),
-  });
+  return apiJson<KnowledgeRecallEvalResult>(
+    `/api/knowledge/index/evaluate?scope=${scope}`,
+    {
+      method: "POST",
+      body: jsonBody({
+        cases,
+        category: category ?? null,
+        limit,
+        search_mode: "hybrid",
+      }),
+    },
+  );
 }
 
-export function readKnowledgeFile(filePath: string, anchor?: string | null) {
+export function readKnowledgeFile(
+  filePath: string,
+  anchor?: string | null,
+  scope: KnowledgeReadScope = "auto",
+) {
   return apiJson<{ content: string; truncated?: boolean; file_path?: string }>(
-    "/api/knowledge/files/read",
+    `/api/knowledge/files/read?scope=${scope}`,
     {
       method: "POST",
       body: jsonBody({
@@ -427,35 +462,45 @@ export function saveKnowledgeFile(
   filePath: string,
   content: string,
   anchor?: string | null,
+  scope: KnowledgeScope = "private",
 ) {
-  return apiJson<KnowledgeFileSaveResult>("/api/knowledge/files/save", {
-    method: "PUT",
-    body: jsonBody({
-      file_path: filePath,
-      content,
-      anchor: anchor ?? null,
-    }),
-  });
+  return apiJson<KnowledgeFileSaveResult>(
+    `/api/knowledge/files/save?scope=${scope}`,
+    {
+      method: "PUT",
+      body: jsonBody({
+        file_path: filePath,
+        content,
+        anchor: anchor ?? null,
+      }),
+    },
+  );
 }
 
-export function buildKnowledgeIndex(folderPath?: string) {
-  return apiJson<KnowledgeIndexBuildResult>("/api/knowledge/index/build", {
-    method: "POST",
-    body: jsonBody({
-      folder_path: folderPath ?? "",
-      recursive: true,
-      replace_existing: true,
-      incremental: true,
-      project_types: ["科研项目申报"],
-    }),
-  });
+export function buildKnowledgeIndex(
+  folderPath?: string,
+  scope: KnowledgeScope = "private",
+) {
+  return apiJson<KnowledgeIndexBuildResult>(
+    `/api/knowledge/index/build?scope=${scope}`,
+    {
+      method: "POST",
+      body: jsonBody({
+        folder_path: folderPath ?? "",
+        recursive: true,
+        replace_existing: true,
+        incremental: true,
+        project_types: ["科研项目申报"],
+      }),
+    },
+  );
 }
 
-export function incrementalUpdateKnowledge() {
+export function incrementalUpdateKnowledge(scope: KnowledgeScope = "private") {
   return apiJson<{
     organization?: { scanned?: number; moved?: number };
     index_build: KnowledgeIndexBuildResult;
-  }>("/api/knowledge/index/incremental-update", {
+  }>(`/api/knowledge/index/incremental-update?scope=${scope}`, {
     method: "POST",
     body: jsonBody({
       organize_incoming: true,
@@ -472,11 +517,13 @@ export function incrementalUpdateKnowledge() {
   });
 }
 
-export function processIncomingAndBuildKnowledgeIndex() {
+export function processIncomingAndBuildKnowledgeIndex(
+  scope: KnowledgeScope = "private",
+) {
   return apiJson<{
     organization?: { scanned?: number; moved?: number };
     index_build: KnowledgeIndexBuildResult;
-  }>("/api/knowledge/index/process-incoming", {
+  }>(`/api/knowledge/index/process-incoming?scope=${scope}`, {
     method: "POST",
     body: jsonBody({
       incoming_path: "_incoming",
@@ -497,11 +544,13 @@ export function uploadKnowledgeFiles(
   incomingPath = "_incoming",
   applicantId = "default",
   evidenceType = "image_evidence",
+  scope: KnowledgeScope = "private",
 ) {
   const params = new URLSearchParams({
     incoming_path: incomingPath,
     applicant_id: applicantId,
     evidence_type: evidenceType,
+    scope,
   });
   const form = new FormData();
   for (const file of files) form.append("files", file);
@@ -517,8 +566,11 @@ export function uploadKnowledgeFiles(
   });
 }
 
-export async function downloadKnowledgeFile(filePath: string) {
-  const params = new URLSearchParams({ file_path: filePath });
+export async function downloadKnowledgeFile(
+  filePath: string,
+  scope: KnowledgeReadScope = "auto",
+) {
+  const params = new URLSearchParams({ file_path: filePath, scope });
   const response = await apiFetch(`/api/knowledge/files/download?${params}`);
   if (!response.ok) {
     const detail = await response.json().catch(() => undefined);

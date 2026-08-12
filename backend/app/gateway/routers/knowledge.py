@@ -57,9 +57,9 @@ from deerflow.knowledge import (
     reextract_knowledge_evidence,
     resolve_asset_file,
     save_knowledge_file,
-    search_knowledge_documents_combined,
+    search_knowledge_documents,
     search_knowledge_evidence,
-    search_knowledge_index_entries_combined,
+    search_knowledge_index_entries,
     update_knowledge_document,
     update_knowledge_evidence,
     update_knowledge_index_entry,
@@ -86,6 +86,27 @@ def _scope_user_id(scope: KnowledgeScope) -> str | None:
 async def _authorize_public_write(scope: KnowledgeScope, request: Request) -> None:
     if scope == "public":
         await require_admin_user(request, resource="the public knowledge base")
+
+
+async def _authorize_public_read(scope: KnowledgeScope, request: Request) -> None:
+    if scope == "public":
+        await require_admin_user(request, resource="the public knowledge base")
+
+
+async def _effective_read_scope(scope: KnowledgeReadScope, request: Request) -> KnowledgeReadScope:
+    if scope == "public":
+        await _authorize_public_read("public", request)
+        return scope
+    if scope == "private":
+        return scope
+    try:
+        await require_admin_user(request, resource="the public knowledge base")
+    except HTTPException as exc:
+        if exc.status_code in {401, 403}:
+            return "private"
+        raise
+    return "auto"
+
 
 UPLOAD_CHUNK_SIZE = 8192
 KNOWLEDGE_MAX_FILES = 20
@@ -419,11 +440,13 @@ def _run_incremental_update(
     description="List knowledge-base documents for the current user, optionally filtered by library and document type.",
 )
 async def list_documents(
+    request: Request,
     library: str | None = Query(default=None),
     doc_type: str | None = Query(default=None),
     scope: KnowledgeScope = Query(default="private"),
 ) -> list[KnowledgeDocument]:
     """List knowledge-base documents."""
+    await _authorize_public_read(scope, request)
     return list_knowledge_documents(
         user_id=_scope_user_id(scope),
         library=library,
@@ -457,9 +480,11 @@ async def create_document(
 )
 async def get_document(
     document_id: str,
+    request: Request,
     scope: KnowledgeScope = Query(default="private"),
 ) -> KnowledgeDocument:
     """Get a knowledge-base document."""
+    await _authorize_public_read(scope, request)
     try:
         return get_knowledge_document(document_id, user_id=_scope_user_id(scope))
     except KeyError as exc:
@@ -513,9 +538,14 @@ async def delete_document(
     summary="Search Knowledge Base",
     description="Search knowledge-base documents with keyword matching, library filters, type filters, and metadata filters.",
 )
-async def search_knowledge(request: KnowledgeSearchRequest) -> KnowledgeSearchResponse:
+async def search_knowledge(
+    body: KnowledgeSearchRequest,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeSearchResponse:
     """Search the current user's knowledge base."""
-    return search_knowledge_documents_combined(request, user_id=get_effective_user_id())
+    await _authorize_public_read(scope, request)
+    return search_knowledge_documents(body, user_id=_scope_user_id(scope))
 
 
 @router.get(
@@ -526,10 +556,12 @@ async def search_knowledge(request: KnowledgeSearchRequest) -> KnowledgeSearchRe
     description="List LLM-Wiki index entries. Agents should search this index before reading source files.",
 )
 async def list_index_entries(
+    request: Request,
     category: str | None = Query(default=None),
     scope: KnowledgeScope = Query(default="private"),
 ) -> list[KnowledgeIndexEntry]:
     """List LLM-Wiki index entries."""
+    await _authorize_public_read(scope, request)
     return list_knowledge_index_entries(user_id=_scope_user_id(scope), category=category)
 
 
@@ -542,9 +574,11 @@ async def list_index_entries(
 )
 async def list_index_entries_page(
     body: KnowledgeIndexListRequest,
+    request: Request,
     scope: KnowledgeScope = Query(default="private"),
 ) -> KnowledgeIndexListResponse:
     """List a paged slice of LLM-Wiki index entries."""
+    await _authorize_public_read(scope, request)
     return list_knowledge_index_entries_page(body, user_id=_scope_user_id(scope))
 
 
@@ -574,9 +608,11 @@ async def create_index_entry(
 )
 async def get_index_entry(
     index_id: str,
+    request: Request,
     scope: KnowledgeScope = Query(default="private"),
 ) -> KnowledgeIndexEntry:
     """Get an LLM-Wiki index entry."""
+    await _authorize_public_read(scope, request)
     try:
         return get_knowledge_index_entry(index_id, user_id=_scope_user_id(scope))
     except KeyError as exc:
@@ -630,9 +666,14 @@ async def delete_index_entry(
     summary="Search Knowledge Index",
     description="Search the LLM-Wiki index layer before reading source files.",
 )
-async def search_index(request: KnowledgeIndexSearchRequest) -> KnowledgeIndexSearchResponse:
+async def search_index(
+    body: KnowledgeIndexSearchRequest,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeIndexSearchResponse:
     """Search LLM-Wiki index entries."""
-    return search_knowledge_index_entries_combined(request, user_id=get_effective_user_id())
+    await _authorize_public_read(scope, request)
+    return search_knowledge_index_entries(body, user_id=_scope_user_id(scope))
 
 
 @router.post(
@@ -644,9 +685,11 @@ async def search_index(request: KnowledgeIndexSearchRequest) -> KnowledgeIndexSe
 )
 async def evaluate_index_recall(
     body: KnowledgeRecallEvalRequest,
+    request: Request,
     scope: KnowledgeScope = Query(default="private"),
 ) -> KnowledgeRecallEvalResponse:
     """Evaluate knowledge index retrieval quality."""
+    await _authorize_public_read(scope, request)
     return evaluate_knowledge_recall(body, user_id=_scope_user_id(scope))
 
 
@@ -839,10 +882,13 @@ async def upload_files(
 )
 async def read_asset_content(
     asset_id: str,
+    request: Request,
     applicant_id: str = Query(..., min_length=1),
     thumbnail: bool = Query(default=False),
+    scope: KnowledgeScope = Query(default="private"),
 ) -> FileResponse:
-    user_id = get_effective_user_id()
+    await _authorize_public_read(scope, request)
+    user_id = _scope_user_id(scope)
     try:
         asset = get_knowledge_asset(asset_id, applicant_id=applicant_id, user_id=user_id)
         resolved = resolve_asset_file(asset, thumbnail=thumbnail, user_id=user_id)
@@ -860,19 +906,22 @@ async def read_asset_content(
     summary="Search Knowledge Evidence",
 )
 async def search_evidence(
+    request: Request,
     applicant_id: str = Query(..., min_length=1),
     query: str = Query(default=""),
     evidence_type: list[str] | None = Query(default=None),
     verification_status: list[str] | None = Query(default=None),
     limit: int = Query(default=20, ge=1, le=100),
+    scope: KnowledgeScope = Query(default="private"),
 ) -> list[KnowledgeEvidence]:
+    await _authorize_public_read(scope, request)
     return search_knowledge_evidence(
         query=query,
         applicant_id=applicant_id,
         evidence_types=evidence_type,
         verification_statuses=verification_status,
         limit=limit,
-        user_id=get_effective_user_id(),
+        user_id=_scope_user_id(scope),
     )
 
 
@@ -883,21 +932,24 @@ async def search_evidence(
     summary="Batch Review Knowledge Evidence",
 )
 async def batch_review_evidence(
-    request: KnowledgeEvidenceBatchReviewRequest,
+    body: KnowledgeEvidenceBatchReviewRequest,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
 ) -> KnowledgeEvidenceBatchReviewResponse:
-    user_id = get_effective_user_id()
+    await _authorize_public_write(scope, request)
+    user_id = _scope_user_id(scope)
     updated: list[KnowledgeEvidence] = []
     skipped: dict[str, str] = {}
-    for evidence_id in dict.fromkeys(request.evidence_ids):
+    for evidence_id in dict.fromkeys(body.evidence_ids):
         try:
             updated.append(
                 update_knowledge_evidence(
                     evidence_id,
                     KnowledgeEvidencePatch(
-                        verification_status=request.verification_status,
-                        review_notes=request.review_notes,
+                        verification_status=body.verification_status,
+                        review_notes=body.review_notes,
                     ),
-                    applicant_id=request.applicant_id,
+                    applicant_id=body.applicant_id,
                     user_id=user_id,
                 )
             )
@@ -914,9 +966,15 @@ async def batch_review_evidence(
     response_model_exclude_none=True,
     summary="Get Knowledge Evidence",
 )
-async def get_evidence(evidence_id: str, applicant_id: str = Query(..., min_length=1)) -> KnowledgeEvidence:
+async def get_evidence(
+    evidence_id: str,
+    request: Request,
+    applicant_id: str = Query(..., min_length=1),
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeEvidence:
+    await _authorize_public_read(scope, request)
     try:
-        return get_knowledge_evidence(evidence_id, applicant_id=applicant_id, user_id=get_effective_user_id())
+        return get_knowledge_evidence(evidence_id, applicant_id=applicant_id, user_id=_scope_user_id(scope))
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge evidence '{evidence_id}' not found.") from exc
 
@@ -929,13 +987,16 @@ async def get_evidence(evidence_id: str, applicant_id: str = Query(..., min_leng
 )
 async def extract_evidence(
     evidence_id: str,
+    request: Request,
     applicant_id: str = Query(..., min_length=1),
+    scope: KnowledgeScope = Query(default="private"),
 ) -> KnowledgeEvidence:
+    await _authorize_public_write(scope, request)
     try:
         return reextract_knowledge_evidence(
             evidence_id,
             applicant_id=applicant_id,
-            user_id=get_effective_user_id(),
+            user_id=_scope_user_id(scope),
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge evidence '{evidence_id}' not found.") from exc
@@ -951,15 +1012,18 @@ async def extract_evidence(
 )
 async def patch_evidence(
     evidence_id: str,
-    request: KnowledgeEvidencePatch,
+    body: KnowledgeEvidencePatch,
+    request: Request,
     applicant_id: str = Query(..., min_length=1),
+    scope: KnowledgeScope = Query(default="private"),
 ) -> KnowledgeEvidence:
+    await _authorize_public_write(scope, request)
     try:
         return update_knowledge_evidence(
             evidence_id,
-            request,
+            body,
             applicant_id=applicant_id,
-            user_id=get_effective_user_id(),
+            user_id=_scope_user_id(scope),
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge evidence '{evidence_id}' not found.") from exc
@@ -974,13 +1038,16 @@ async def patch_evidence(
 )
 async def delete_evidence(
     evidence_id: str,
+    request: Request,
     applicant_id: str = Query(..., min_length=1),
+    scope: KnowledgeScope = Query(default="private"),
 ) -> KnowledgeEvidenceDeleteResponse:
+    await _authorize_public_write(scope, request)
     try:
         asset_ids = delete_knowledge_evidence(
             evidence_id,
             applicant_id=applicant_id,
-            user_id=get_effective_user_id(),
+            user_id=_scope_user_id(scope),
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge evidence '{evidence_id}' not found.") from exc
@@ -994,12 +1061,14 @@ async def delete_evidence(
     description="Download a source file by path relative to the knowledge-base root.",
 )
 async def download_file(
+    request: Request,
     file_path: str = Query(..., min_length=1),
     scope: KnowledgeReadScope = Query(default="auto"),
 ) -> FileResponse:
     """Download a source file from the knowledge base."""
+    effective_scope = await _effective_read_scope(scope, request)
     user_id = get_effective_user_id()
-    scope_ids = [user_id, None] if scope == "auto" else [_scope_user_id(scope)]
+    scope_ids = [user_id, None] if effective_scope == "auto" else [_scope_user_id(effective_scope)]
     for scope_user_id in scope_ids:
         root = knowledge_storage._knowledge_root_path(user_id=scope_user_id)
         try:
@@ -1055,11 +1124,13 @@ async def delete_file(
 )
 async def read_file(
     body: KnowledgeFileReadRequest,
+    request: Request,
     scope: KnowledgeReadScope = Query(default="auto"),
 ) -> KnowledgeFileReadResponse:
     """Read a source file referenced by the LLM-Wiki index."""
+    effective_scope = await _effective_read_scope(scope, request)
     try:
-        return read_knowledge_file_combined(body, user_id=get_effective_user_id(), scope=scope)
+        return read_knowledge_file_combined(body, user_id=get_effective_user_id(), scope=effective_scope)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge file '{body.file_path}' not found.") from exc
     except ValueError as exc:

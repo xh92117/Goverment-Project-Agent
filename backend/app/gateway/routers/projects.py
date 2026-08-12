@@ -25,7 +25,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from app.gateway.deps import get_thread_store
-from app.gateway.docx_export import build_markdown_docx, docx_media_type
+from app.gateway.docx_export import DocxFormatOptions, build_markdown_docx, docx_media_type
 from deerflow.config.paths import VIRTUAL_PATH_PREFIX, get_paths
 from deerflow.government_project_workspace import government_project_workspace_root
 from deerflow.knowledge.export_images import (
@@ -181,6 +181,14 @@ class ProjectFileExportItem(BaseModel):
     thread_id: str | None = None
 
 
+class ProjectWordFormatOptions(BaseModel):
+    body_font: str = Field(default="仿宋", min_length=1, max_length=40)
+    body_font_size_pt: float = Field(default=12.0, ge=8.0, le=24.0)
+    line_spacing: float = Field(default=1.5, ge=1.0, le=3.0)
+    heading_font: str = Field(default="黑体", min_length=1, max_length=40)
+    heading_start_level: int = Field(default=1, ge=1, le=3)
+
+
 class ProjectFileExportRequest(BaseModel):
     files: list[ProjectFileExportItem] = Field(min_length=1, max_length=80)
     mode: Literal["merged", "separate"] = "merged"
@@ -188,6 +196,7 @@ class ProjectFileExportRequest(BaseModel):
     include_images: bool = False
     applicant_id: str = Field(default="default", min_length=1, max_length=128)
     model_name: str | None = Field(default=None, max_length=120)
+    word_format: ProjectWordFormatOptions | None = None
 
 
 class ProjectFileUploadResponse(BaseModel):
@@ -1324,10 +1333,16 @@ async def export_project_files_docx(project_id: str, body: ProjectFileExportRequ
         evidence_count = enrichment.evidence_count
 
     export_title = (body.title or project.name or "项目文件导出").strip()
+    format_options = DocxFormatOptions(**body.word_format.model_dump()) if body.word_format else None
     if body.mode == "merged":
         entries.sort(key=lambda entry: entry["sort_key"])
         merged = "\n\n".join(_merged_export_section(str(entry["title"]), str(entry["content"])) for entry in entries)
-        data = build_markdown_docx(export_title, merged, include_title=True)
+        data = build_markdown_docx(
+            export_title,
+            merged,
+            include_title=True,
+            format_options=format_options,
+        )
         filename = quote(_safe_export_filename(export_title, ".docx"))
         return Response(
             content=data,
@@ -1355,6 +1370,7 @@ async def export_project_files_docx(project_id: str, body: ProjectFileExportRequ
                     str(entry["content"]),
                     base_dir=entry["path"].parent,
                     include_title=not _starts_with_markdown_heading(str(entry["content"])),
+                    format_options=format_options,
                 ),
             )
 

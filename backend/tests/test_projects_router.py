@@ -515,6 +515,7 @@ def test_project_file_export_with_images_runs_agent_before_building_docx(tmp_pat
 
     def fake_build(title, markdown, **kwargs):
         captured["markdown"] = markdown
+        captured["format_options"] = kwargs.get("format_options")
         return b"PK-export"
 
     monkeypatch.setattr(projects, "enrich_export_documents_with_images", fake_enrich)
@@ -535,6 +536,13 @@ def test_project_file_export_with_images_runs_agent_before_building_docx(tmp_pat
                 "include_images": True,
                 "applicant_id": "default",
                 "model_name": "qwen-selector",
+                "word_format": {
+                    "body_font": "宋体",
+                    "body_font_size_pt": 14,
+                    "line_spacing": 2,
+                    "heading_font": "楷体",
+                    "heading_start_level": 2,
+                },
             },
         )
 
@@ -543,6 +551,13 @@ def test_project_file_export_with_images_runs_agent_before_building_docx(tmp_pat
     assert captured["applicant_id"] == "default"
     assert captured["model_name"] == "qwen-selector"
     assert "evidence://default/evd_verified" in captured["markdown"]
+    format_options = captured["format_options"]
+    assert isinstance(format_options, projects.DocxFormatOptions)
+    assert format_options.body_font == "宋体"
+    assert format_options.body_font_size_pt == 14
+    assert format_options.line_spacing == 2
+    assert format_options.heading_font == "楷体"
+    assert format_options.heading_start_level == 2
 
 
 def test_project_file_export_without_images_keeps_direct_path(tmp_path, monkeypatch):

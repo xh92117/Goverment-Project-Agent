@@ -1,7 +1,9 @@
 """Public/private knowledge-base isolation and retrieval tests."""
 
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -41,12 +43,8 @@ def test_public_and_private_knowledge_roots_are_distinct(tmp_path, monkeypatch):
     public_root = _configure_roots(tmp_path, monkeypatch)
 
     assert knowledge_storage._knowledge_root_path() == public_root
-    assert knowledge_storage._knowledge_root_path(user_id="user-a") == (
-        tmp_path / "state" / "users" / "user-a" / "knowledge_base"
-    )
-    assert knowledge_storage._knowledge_root_path(user_id="user-b") != (
-        knowledge_storage._knowledge_root_path(user_id="user-a")
-    )
+    assert knowledge_storage._knowledge_root_path(user_id="user-a") == (tmp_path / "state" / "users" / "user-a" / "knowledge_base")
+    assert knowledge_storage._knowledge_root_path(user_id="user-b") != (knowledge_storage._knowledge_root_path(user_id="user-a"))
 
 
 def test_combined_search_returns_public_plus_callers_private_only(tmp_path, monkeypatch):
@@ -100,6 +98,11 @@ def test_agent_tools_search_and_read_across_public_and_private(tmp_path, monkeyp
     knowledge_storage.create_knowledge_index_entry(_entry("alice evidence", "alice.md"), user_id="alice")
     public_root.joinpath("public.md").write_text("shared policy", encoding="utf-8")
     monkeypatch.setattr(knowledge_tools, "get_effective_user_id", lambda: "alice")
+    monkeypatch.setattr(
+        knowledge_tools,
+        "get_current_user",
+        lambda: SimpleNamespace(id="alice", system_role="admin"),
+    )
 
     search_text = knowledge_tools.knowledge_search_index_tool.func(query="", limit=10)
     read_text = knowledge_tools.knowledge_read_file_tool.func(file_path="public.md")
@@ -111,7 +114,29 @@ def test_agent_tools_search_and_read_across_public_and_private(tmp_path, monkeyp
     assert "knowledge_scope: public" in read_text
 
 
-def test_knowledge_api_searches_and_reads_combined_scope(tmp_path, monkeypatch):
+def test_regular_user_agent_tools_only_access_private_knowledge(tmp_path, monkeypatch):
+    from deerflow.tools.builtins import knowledge_tools
+
+    public_root = _configure_roots(tmp_path, monkeypatch)
+    knowledge_storage.create_knowledge_index_entry(_entry("public guide", "public.md"), user_id=None)
+    knowledge_storage.create_knowledge_index_entry(_entry("alice evidence", "alice.md"), user_id="alice")
+    public_root.joinpath("public.md").write_text("shared policy", encoding="utf-8")
+    monkeypatch.setattr(knowledge_tools, "get_effective_user_id", lambda: "alice")
+    monkeypatch.setattr(
+        knowledge_tools,
+        "get_current_user",
+        lambda: SimpleNamespace(id="alice", system_role="user"),
+    )
+
+    search_text = knowledge_tools.knowledge_search_index_tool.func(query="", limit=10)
+
+    assert "alice evidence" in search_text
+    assert "public guide" not in search_text
+    with pytest.raises(PermissionError, match="system administrators"):
+        knowledge_tools.knowledge_read_file_tool.func(file_path="public.md", scope="public")
+
+
+def test_knowledge_api_searches_selected_scope_and_reads_public_for_no_auth_admin(tmp_path, monkeypatch):
     from app.gateway.routers import knowledge
 
     public_root = _configure_roots(tmp_path, monkeypatch)
@@ -123,14 +148,17 @@ def test_knowledge_api_searches_and_reads_combined_scope(tmp_path, monkeypatch):
     app.include_router(knowledge.router)
 
     with TestClient(app) as client:
-        searched = client.post("/api/knowledge/index/search", json={"query": "", "limit": 10})
+        private_search = client.post("/api/knowledge/index/search", json={"query": "", "limit": 10})
+        public_search = client.post(
+            "/api/knowledge/index/search?scope=public",
+            json={"query": "", "limit": 10},
+        )
         read = client.post("/api/knowledge/files/read", json={"file_path": "public.md"})
 
-    assert searched.status_code == 200, searched.text
-    assert {item["entry"]["title"] for item in searched.json()["results"]} == {
-        "public guide",
-        "alice evidence",
-    }
+    assert private_search.status_code == 200, private_search.text
+    assert [item["entry"]["title"] for item in private_search.json()["results"]] == ["alice evidence"]
+    assert public_search.status_code == 200, public_search.text
+    assert [item["entry"]["title"] for item in public_search.json()["results"]] == ["public guide"]
     assert read.status_code == 200, read.text
     assert read.json()["scope"] == "public"
 
@@ -149,11 +177,13 @@ def test_non_admin_cannot_create_public_knowledge_entry(tmp_path, monkeypatch):
     app.add_middleware(UserMiddleware)
     app.include_router(knowledge.router)
     with TestClient(app) as client:
+        public_list = client.get("/api/knowledge/index?scope=public")
         response = client.post(
             "/api/knowledge/index?scope=public",
             json={"title": "shared", "category": "test", "file_path": "shared.md"},
         )
 
+    assert public_list.status_code == 403
     assert response.status_code == 403
     assert knowledge_storage.list_knowledge_index_entries(user_id=None) == []
 
