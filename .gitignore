@@ -1,0 +1,75 @@
+# DeerFlow docker image cache
+docker/.cache/
+# oh-my-claudecode state
+.omc/
+# OS generated files
+.DS_Store
+*.local
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv
+venv/
+
+# Environment variables
+.env
+
+# Configuration files
+config.yaml
+mcp_config.json
+extensions_config.json
+
+# IDE
+.idea/
+.vscode/
+
+# Coverage report
+coverage.xml
+coverage/
+.deer-flow/
+.agent-base/
+.claude/
+skills/custom/*
+logs/
+log/
+debug.log
+.tmp-*.log
+
+# Runtime workspace data must stay outside the source tree.
+/workspace/
+/_legacy_source_runtime*/
+
+# Local git hooks (keep only on this machine, do not push)
+.githooks/
+
+# pnpm
+node_modules/
+.pnpm-store
+sandbox_image_cache.tar
+
+# Local launch helpers and frontend build output
+.tools/
+.next/
+
+# ignore the legacy `web` folder
+web/
+
+# Deployment artifacts
+backend/Dockerfile.langgraph
+config.yaml.bak
+.playwright-mcp
+/frontend/test-results/
+/frontend/playwright-report/
+.gstack/
+.worktrees

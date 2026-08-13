@@ -1,0 +1,101 @@
+/* ================= Design Tokens ================= */
+
+/* Clean White — 浅色主题（翡翠绿品牌色） */
+:root,
+[data-theme="light"] {
+  --c-primary:       #166534;   /* 深翡翠绿，品牌核心 */
+  --c-primary-2:     #14532d;   /* hover 加深 */
+  --c-primary-50:    #ecfdf5;   /* 极浅绿，选中/hover 背景 */
+  --c-primary-100:   #d1fae5;   /* 浅绿，tag/chip 底色 */
+  --c-accent:        #16a34a;   /* 翡翠绿，按钮/链接/高亮 */
+  --c-accent-2:      #15803d;   /* hover 加深 */
+  --c-accent-50:     #f0fdf4;   /* 极浅绿底 */
+  --c-gold:          #b8893e;   /* 保留金色用于装饰 */
+  --c-gold-50:       #fef9e7;   /* 浅金底 */
+  --c-bg:            #ffffff;   /* 纯白底 */
+  --c-bg-2:          #f9fafb;   /* 极浅灰白，Side Panel */
+  --c-surface:       #ffffff;   /* 纯白，Center Canvas */
+  --c-surface-2:     #f3f4f6;   /* 次级白 */
+  --c-ink:           #111827;   /* 近纯黑文字 */
+  --c-ink-2:         #374151;   /* 深灰次级文字 */
+  --c-muted:         #6b7280;   /* 中灰弱化 */
+  --c-muted-2:       #9ca3af;   /* 浅灰 placeholder */
+  --c-border:        #e5e7eb;   /* 浅灰边框 */
+  --c-border-2:      #d1d5db;   /* 加强边框 */
+  --c-success:       #16a34a;
+  --c-warning:       #ca8a04;
+  --c-danger:        #dc2626;
+  --c-info:          #2563eb;
+  --scrim:           rgba(0, 0, 0, 0.06);
+  --c-panel:         var(--c-surface);
+  --c-text:          var(--c-ink);
+  --c-muted-bg:      var(--c-bg-2);
+  --c-primary-soft:  var(--c-primary-50);
+  --c-primary-contrast: #ffffff;
+  --shadow-sm:       var(--sh-1);
+}
+
+/* Midnight Forest — 深色主题（深绿黑底 + 翠绿高亮） */
+[data-theme="dark"] {
+  --c-primary:       #6ee7b7;   /* 亮翡翠绿，暗色下做文字 */
+  --c-primary-2:     #a7f3d0;   /* hover 更亮 */
+  --c-primary-50:    #0d2818;   /* 深墨绿底，选中背景 */
+  --c-primary-100:   #143d25;   /* 中深绿，tag 底色 */
+  --c-accent:        #34d399;   /* 明亮翠绿，交互高亮 */
+  --c-accent-2:      #6ee7b7;   /* hover 更亮 */
+  --c-accent-50:     #0d2818;   /* 深翠绿底 */
+  --c-gold:          #fbbf24;   /* 亮金 */
+  --c-gold-50:       #3d2e0a;   /* 深金底 */
+  --c-bg:            #0a0f0c;   /* 最深底色（近纯黑带微绿偏） */
+  --c-bg-2:          #111916;   /* 次深底，Side Panel */
+  --c-surface:       #151f1a;   /* 主内容面，Center Canvas */
+  --c-surface-2:     #1a2820;   /* 次级面，卡片 */
+  --c-ink:           #e5e8e2;   /* 主文字高对比 */
+  --c-ink-2:         #c5cac2;   /* 次级文字 */
+  --c-muted:         #7e8a82;   /* 弱化文字 */
+  --c-muted-2:       #4f5750;   /* placeholder */
+  --c-border:        #1f2e26;   /* 常规边框 */
+  --c-border-2:      #2d4035;   /* 加强边框 */
+  --c-success:       #34d399;
+  --c-warning:       #fbbf24;
+  --c-danger:        #f87171;
+  --c-info:          #60a5fa;
+  --scrim:           rgba(0, 0, 0, 0.45);
+  --c-panel:         var(--c-surface);
+  --c-text:          var(--c-ink);
+  --c-muted-bg:      var(--c-bg-2);
+  --c-primary-soft:  var(--c-primary-50);
+  --c-primary-contrast: #0a0f0c;
+  --shadow-sm:       var(--sh-1);
+  color-scheme: dark;
+}
+
+/* Global tokens (both themes) */
+:root {
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "宋体", serif;
+  --font-sans:
+    "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+  --r-xs: 4px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 20px;
+  --r-2xl: 24px;
+  --r-full: 9999px;
+  --sh-1: 0 1px 2px var(--scrim), 0 1px 1px var(--scrim);
+  --sh-2: 0 4px 14px var(--scrim), 0 1px 3px var(--scrim);
+  --sh-3: 0 16px 40px var(--scrim), 0 2px 6px var(--scrim);
+  --sidebar-w: 280px;
+  --topbar-h: 60px;
+  color-scheme: light;
+}

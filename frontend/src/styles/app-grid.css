@@ -1,0 +1,151 @@
+/* ================= Four-Column App Grid ================= */
+
+.app-grid {
+  display: grid;
+  grid-template-columns: 48px 240px 1fr;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--c-bg);
+}
+
+/* When side panel is collapsed */
+.app-grid.has-collapsed-panel {
+  grid-template-columns: 48px 48px 1fr;
+}
+
+/* When right panel is present (project workspace) */
+.app-grid.with-right {
+  grid-template-columns: 48px 240px 1fr 320px;
+}
+
+.app-grid.with-right.has-collapsed-panel {
+  grid-template-columns: 48px 48px 1fr 320px;
+}
+
+/* Center canvas area */
+.app-grid-center {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--c-bg);
+  position: relative;
+}
+
+/* Chat-specific center with decorative gradients */
+.app-grid-center.chat-canvas {
+  background:
+    radial-gradient(
+      ellipse at top left,
+      color-mix(in srgb, var(--c-primary) 4%, transparent) 0%,
+      transparent 50%
+    ),
+    radial-gradient(
+      ellipse at bottom right,
+      color-mix(in srgb, var(--c-accent) 4%, transparent) 0%,
+      transparent 50%
+    ),
+    var(--c-bg);
+}
+
+/* Context bar at top of center canvas */
+.app-grid-context-bar {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--sp-5);
+  border-bottom: 1px solid var(--c-border);
+  background: color-mix(in srgb, var(--c-surface) 72%, transparent);
+  backdrop-filter: saturate(140%) blur(14px);
+  flex-shrink: 0;
+  gap: var(--sp-2);
+}
+
+/* Content area below context bar */
+.app-grid-content {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Right panel (e.g., file preview in project workspace) */
+.app-grid-right {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--c-border);
+  background: var(--c-panel);
+}
+
+/* ================= Responsive Breakpoints ================= */
+
+/* ≥1280px：完整四栏 (default) */
+
+/* 1024–1279px：隐藏 Right Panel */
+@media (max-width: 1279px) {
+  .app-grid.with-right {
+    grid-template-columns: 48px 240px 1fr;
+  }
+
+  .app-grid.with-right.has-collapsed-panel {
+    grid-template-columns: 48px 48px 1fr;
+  }
+
+  .app-grid-right {
+    display: none;
+  }
+}
+
+/* 768–1023px：Side Panel 改为 overlay 模式 */
+@media (max-width: 1023px) {
+  .app-grid {
+    grid-template-columns: 48px 1fr;
+  }
+
+  .app-grid.has-collapsed-panel {
+    grid-template-columns: 48px 1fr;
+  }
+
+  .app-grid.with-right {
+    grid-template-columns: 48px 1fr;
+  }
+
+  .app-grid.with-right.has-collapsed-panel {
+    grid-template-columns: 48px 1fr;
+  }
+
+  /* Side panel becomes overlay */
+  .side-panel:not(.collapsed) {
+    position: fixed;
+    left: 48px;
+    top: 0;
+    bottom: 0;
+    z-index: 50;
+    box-shadow: var(--sh-3);
+  }
+}
+
+/* <768px：隐藏 Icon Rail，全宽 */
+@media (max-width: 767px) {
+  .app-grid,
+  .app-grid.has-collapsed-panel,
+  .app-grid.with-right,
+  .app-grid.with-right.has-collapsed-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .icon-rail {
+    display: none;
+  }
+
+  /* Side panel overlay from left edge */
+  .side-panel:not(.collapsed) {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 50;
+    box-shadow: var(--sh-3);
+  }
+}

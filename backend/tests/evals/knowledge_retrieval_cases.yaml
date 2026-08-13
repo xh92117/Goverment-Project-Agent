@@ -1,0 +1,101 @@
+index_entries:
+  - title: "2025年度重点研发计划申报指南"
+    category: "政策指南"
+    file_path: "政策指南/2025重点研发指南.md"
+    keywords: ["重点研发", "申报条件", "申请单位资格"]
+    authority: "某省科学技术厅"
+    document_type: "application_guide"
+    year: 2025
+    valid_from: "2025-01-01"
+    valid_to: "2025-12-31"
+  - title: "2026年度重点研发计划申报指南"
+    category: "政策指南"
+    file_path: "政策指南/2026重点研发指南.md"
+    keywords: ["重点研发", "申报条件", "申请单位资格"]
+    authority: "某省科学技术厅"
+    document_type: "application_guide"
+    year: 2026
+    valid_from: "2026-01-01"
+    valid_to: "2026-12-31"
+  - title: "2026年度产业专项申报通知"
+    category: "政策指南"
+    file_path: "政策指南/工信部门2026产业专项通知.md"
+    keywords: ["组织申报", "产业专项", "截止时间"]
+    authority: "某省工业和信息化厅"
+    document_type: "application_notice"
+    year: 2026
+    valid_from: "2026-03-01"
+    valid_to: "2026-08-31"
+  - title: "重点研发项目经费预算管理规则"
+    category: "预算依据"
+    file_path: "预算依据/重点研发预算管理规则.md"
+    keywords: ["预算科目", "间接费用", "经费比例"]
+    authority: "某省财政厅"
+    document_type: "budget_rule"
+    year: 2026
+  - title: "重点研发计划申报书模板"
+    category: "申报书模板"
+    file_path: "申报书模板/2026重点研发申报书模板.md"
+    keywords: ["申报书", "章节", "填报说明"]
+    authority: "某省科学技术厅"
+    document_type: "application_template"
+    year: 2026
+  - title: "甲公司智能检测研究基础"
+    category: "已有研究基础"
+    file_path: "已有研究基础/甲公司智能检测.md"
+    keywords: ["智能检测", "研究基础", "示范应用"]
+    applicant_id: "org-001"
+    document_type: "research_foundation"
+  - title: "乙公司智能检测研究基础"
+    category: "已有研究基础"
+    file_path: "已有研究基础/乙公司智能检测.md"
+    keywords: ["智能检测", "研究基础", "示范应用"]
+    applicant_id: "org-002"
+    document_type: "research_foundation"
+  - title: "隧洞检测技术路线"
+    entry_type: "section"
+    category: "历史申报书"
+    file_path: "申报书章节分块/隧洞检测/技术路线.md"
+    source_file_path: "历史申报书/隧洞检测项目.md"
+    source_anchor: "技术路线"
+    keywords: ["隧洞检测", "实施路径"]
+    proposal_sections: ["technical_route"]
+    document_type: "historical_proposal"
+
+cases:
+  - query: "重点研发申报条件"
+    years: [2026]
+    document_types: ["application_guide"]
+    expected_file_paths: ["政策指南/2026重点研发指南.md"]
+    forbidden_file_paths: ["政策指南/2025重点研发指南.md"]
+  - query: "2026专项申报截止时间"
+    authorities: ["某省工业和信息化厅"]
+    document_types: ["application_notice"]
+    expected_file_paths: ["政策指南/工信部门2026产业专项通知.md"]
+    forbidden_file_paths: ["政策指南/2026重点研发指南.md"]
+  - query: "企业申报资格"
+    query_variants: ["申请单位资格", "企业申请条件"]
+    years: [2026]
+    expected_file_paths: ["政策指南/2026重点研发指南.md"]
+    forbidden_file_paths: ["政策指南/2025重点研发指南.md"]
+  - query: "间接费用和经费比例"
+    document_types: ["budget_rule"]
+    expected_file_paths: ["预算依据/重点研发预算管理规则.md"]
+  - query: "申报书章节填报说明"
+    document_types: ["application_template"]
+    years: [2026]
+    expected_file_paths: ["申报书模板/2026重点研发申报书模板.md"]
+  - query: "智能检测研究基础"
+    applicant_ids: ["org-001"]
+    expected_file_paths: ["已有研究基础/甲公司智能检测.md"]
+    forbidden_file_paths: ["已有研究基础/乙公司智能检测.md"]
+  - query: "重点研发申报条件"
+    valid_on: "2026-07-14"
+    authorities: ["某省科学技术厅"]
+    document_types: ["application_guide"]
+    expected_file_paths: ["政策指南/2026重点研发指南.md"]
+    forbidden_file_paths: ["政策指南/2025重点研发指南.md"]
+  - query: "隧洞检测实施路径"
+    entry_types: ["section"]
+    applicable_chapters: ["technical_route"]
+    expected_file_paths: ["申报书章节分块/隧洞检测/技术路线.md"]

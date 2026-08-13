@@ -1,0 +1,544 @@
+config_version: 12
+log_level: info
+models:
+- name: deepseek-v4-flash
+  display_name: DeepSeek V4 Flash
+  description: 用于政府科研项目申报书常规对话、资料整理和文本撰写
+  use: deerflow.models.patched_deepseek:PatchedChatDeepSeek
+  model: deepseek-v4-flash
+  api_key: $DEEPSEEK_API_KEY
+  request_timeout: 600.0
+  max_retries: 2
+  max_tokens: 8192
+  temperature: 0.2
+  supports_thinking: false
+  supports_reasoning_effort: false
+  supports_vision: false
+- name: deepseek-v4-pro
+  display_name: DeepSeek V4 Pro
+  description: 用于课题方向论证、技术路线推理、创新点梳理等深度思考任务
+  use: deerflow.models.patched_deepseek:PatchedChatDeepSeek
+  model: deepseek-v4-pro
+  api_key: $DEEPSEEK_API_KEY
+  request_timeout: 600.0
+  max_retries: 2
+  max_tokens: 8192
+  temperature: 0.2
+  supports_thinking: true
+  supports_reasoning_effort: false
+  supports_vision: false
+- name: qwen-qwen3.7-plus
+  provider: qwen
+  display_name: qwen3.7-plus
+  use: langchain_openai:ChatOpenAI
+  model: qwen3.7-plus
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  api_key: $DASHSCOPE_API_KEY
+  supports_thinking: false
+  supports_reasoning_effort: false
+  supports_vision: true
+knowledge_image_model: qwen-qwen3.7-plus
+sandbox:
+  use: deerflow.sandbox.local:LocalSandboxProvider
+  allow_host_bash: false
+subagents:
+  enabled: true
+  max_concurrent_subagents: 3
+  max_process_concurrent_subagents: 4
+  tool_call_limits:
+    web_search: 2
+    web_fetch: 3
+    web_extract: 1
+  max_turns: 16
+  timeout_seconds: 300
+  agents:
+    general-purpose:
+      max_turns: 80
+      timeout_seconds: 900
+    guide-analyzer:
+      model: deepseek-v4-pro
+      max_turns: 6
+      timeout_seconds: 240
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-topic-planning
+      - gov-proposal-compliance-review
+    knowledge-manager:
+      model: deepseek-v4-flash
+      max_turns: 4
+      timeout_seconds: 180
+      skills:
+      - gov-proposal-knowledge-incremental-update
+    topic-planner:
+      model: deepseek-v4-pro
+      max_turns: 6
+      timeout_seconds: 240
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-topic-planning
+    literature-researcher:
+      model: deepseek-v4-pro
+      max_turns: 24
+      timeout_seconds: 420
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-literature-review
+    standards-patent-researcher:
+      model: deepseek-v4-pro
+      max_turns: 24
+      timeout_seconds: 420
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-literature-review
+    proposal-writer:
+      model: deepseek-v4-pro
+      max_turns: 8
+      timeout_seconds: 360
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-research-plan-writing
+    budget-analyst:
+      model: deepseek-v4-pro
+      max_turns: 6
+      timeout_seconds: 240
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-budget-planning
+    compliance-reviewer:
+      model: qwen-qwen3.7-plus
+      max_turns: 6
+      timeout_seconds: 240
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-compliance-review
+  custom_agents:
+    guide-analyzer:
+      description: Policy-constraint expert that extracts authoritative eligibility,
+        material, deadline, scoring, and blocking requirements without drafting proposal
+        prose.
+      system_prompt: 'You are a government research project guide analysis subagent.
+
+        Output language: use Simplified Chinese for headings, narrative summaries,
+        and final findings unless the parent task explicitly asks for another language.
+        Preserve original English proper nouns, standards numbers, paper titles, URLs,
+        and code identifiers.
+
+        Work from authoritative sources first. For current, latest, annual,
+
+        deadline, official notice, policy guide, or year-specific questions,
+
+        use web_search and web_fetch to verify official pages, then use
+
+        web_extract when specific fields must be pulled from retrieved pages. For
+        local
+
+        templates and internal materials, search the LLM-Wiki index first and
+
+        then read relevant file_path/anchor excerpts. Separate retrieved facts
+
+        from interpretation. Return concise structured findings with source
+
+        identifiers.
+
+        '
+      tools:
+      - knowledge_search_index
+      - knowledge_read_file
+      - knowledge_search_evidence
+      - knowledge_read_evidence
+      - web_search
+      - web_fetch
+      - web_extract
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-topic-planning
+      - gov-proposal-compliance-review
+      max_turns: 6
+      timeout_seconds: 240
+    knowledge-manager:
+      description: Knowledge-governance expert that curates incoming files, metadata,
+        duplicates, index quality, and coverage gaps without deciding proposal content.
+      system_prompt: 'You are a knowledge-base maintenance subagent for government
+        research
+
+        project declarations. Only process the configured knowledge-base
+
+        Output language: use Simplified Chinese for headings, narrative summaries,
+        and final findings unless the parent task explicitly asks for another language.
+        Preserve original English proper nouns, standards numbers, paper titles, URLs,
+        and code identifiers.
+
+        _incoming folder by default. Use knowledge_incremental_update. Report
+
+        moved files, skipped files, created/updated/skipped index counts, the
+
+        final index path, and missing knowledge categories. Do not store secrets
+
+        in files.
+
+        '
+      tools:
+      - knowledge_incremental_update
+      - knowledge_search_index
+      - knowledge_read_file
+      - knowledge_search_evidence
+      - knowledge_read_evidence
+      skills:
+      - gov-proposal-knowledge-incremental-update
+      max_turns: 4
+      timeout_seconds: 180
+    topic-planner:
+      description: Multi-constraint decision expert that ranks project directions
+        by policy fit, verified applicant foundation, novelty, feasibility, budget
+        fit, and risk.
+      system_prompt: 'You are a topic planning subagent for government research project
+
+        declarations. Use policy guides, templates, historical applications,
+
+        Output language: use Simplified Chinese for headings, narrative summaries,
+        and final findings unless the parent task explicitly asks for another language.
+        Preserve original English proper nouns, standards numbers, paper titles, URLs,
+        and code identifiers.
+
+        research foundations, and team achievements. Produce candidate
+
+        directions and titles with policy fit, foundation fit, innovation
+
+        potential, feasibility, budget match, competition risk, and a clear
+
+        recommendation. Do not transfer achievements from historical proposals
+
+        to the current applicant unless the parent prompt says they are
+
+        applicable.
+
+        '
+      tools:
+      - knowledge_search_index
+      - knowledge_read_file
+      - knowledge_search_evidence
+      - knowledge_read_evidence
+      - web_search
+      - web_fetch
+      - web_extract
+      - proposal_save_markdown
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-topic-planning
+      max_turns: 6
+      timeout_seconds: 240
+    literature-researcher:
+      description: Evidence-synthesis expert for research routes, representative work,
+        domestic/overseas differences, trends, disputes, and gaps with source traceability.
+      system_prompt: 'You are a literature research subagent for project declarations.
+
+        Output language: use Simplified Chinese for headings, narrative summaries,
+        and final findings unless the parent task explicitly asks for another language.
+        Preserve original English proper nouns, standards numbers, paper titles, URLs,
+        and code identifiers.
+
+        Retrieve papers, patents, standards, technical reports, applicant
+
+        foundations, and similar historical proposal sections through the
+
+        knowledge index first. Use web_search/web_fetch and web_extract for current
+        external
+
+        facts when needed, but keep retrieval bounded: run a small set of
+
+        targeted searches, then stop browsing and return concise findings with
+
+        source references, uncertainty, and conflicts. Write for project
+
+        necessity and research-gap justification, not for a standalone academic
+
+        survey. Keep applicant foundation separate from external research status.
+
+        Hard retrieval budget for one task: at most 2 web_search calls, at most
+
+        3 web_fetch calls, and at most 1 web_extract call. Stop browsing as soon
+
+        as you have enough representative evidence; do not try to be exhaustive.
+
+        Return exactly these sections in Chinese: 总体判断, 技术路线/模型演进,
+
+        代表性来源, 研究缺口, 申报可用启示, and 来源表. If evidence is thin,
+
+        state the gap.
+
+        '
+      tools:
+      - knowledge_search_index
+      - knowledge_read_file
+      - web_search
+      - web_fetch
+      - web_extract
+      - proposal_save_markdown
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-literature-review
+      max_turns: 24
+      timeout_seconds: 420
+    standards-patent-researcher:
+      description: Normative and prior-art expert for standards, testing methods,
+        patents, instruments, and engineering applications with authoritative provenance.
+      system_prompt: 'You are a standards, patents, and testing-method research subagent
+        for
+
+        government research project declarations. Focus on authoritative
+
+        Output language: use Simplified Chinese for headings, narrative summaries,
+        and final findings unless the parent task explicitly asks for another language.
+        Preserve original English proper nouns, standards numbers, paper titles, URLs,
+        and code identifiers.
+
+        standards, official specifications, public consultation drafts, patent
+
+        records, instruments, testing procedures, and engineering applications.
+
+        Use web_search first for current external evidence, then web_fetch only
+
+        for the most useful URLs. Prefer official, standards-body, patent-office,
+
+        transportation, university, and journal sources over generic snippets.
+
+        Hard retrieval budget for one task: at most 2 web_search calls, at most
+
+        3 web_fetch calls, and at most 1 web_extract call. Stop after collecting
+
+        representative evidence; do not loop for exhaustive coverage.
+
+        Return exactly these sections in Chinese: 标准/规范, 检测方法与仪器,
+
+        代表性专利或公开技术记录, 工程应用说明, 未解决的标准化缺口, and
+
+        来源表 with title/URL/source type.
+
+        '
+      tools:
+      - knowledge_search_index
+      - knowledge_read_file
+      - web_search
+      - web_fetch
+      - web_extract
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-literature-review
+      max_turns: 24
+      timeout_seconds: 420
+    proposal-writer:
+      description: Proposal-structure expert that converts supplied decisions and
+        evidence into an objective-task-method-indicator-outcome chain without inventing
+        new facts.
+      system_prompt: 'You are a research plan writing subagent for government research
+        project
+
+        declarations. Use the matched template, guide requirements, selected
+
+        Output language: use Simplified Chinese for headings, narrative summaries,
+        and final findings unless the parent task explicitly asks for another language.
+        Preserve original English proper nouns, standards numbers, paper titles, URLs,
+        and code identifiers.
+
+        title, literature findings, research foundations, team achievements,
+
+        and historical examples. Ensure objectives, tasks, methods, indicators,
+
+        outcomes, schedule, risks, and budget implications are internally
+
+        consistent. Cite source evidence when available.
+
+        '
+      tools:
+      - knowledge_search_index
+      - knowledge_read_file
+      - knowledge_search_evidence
+      - knowledge_read_evidence
+      - proposal_save_markdown
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-research-plan-writing
+      max_turns: 8
+      timeout_seconds: 360
+    budget-analyst:
+      description: Quantitative budget expert for category totals, formulas, assumptions,
+        task-cost mapping, boundary checks, and rule-backed adjustment options.
+      system_prompt: 'You are a budget planning subagent for government research project
+
+        declarations. Use budget rules, budget templates, historical budget
+
+        Output language: use Simplified Chinese for headings, narrative summaries,
+        and final findings unless the parent task explicitly asks for another language.
+        Preserve original English proper nouns, standards numbers, paper titles, URLs,
+        and code identifiers.
+
+        examples, and the current research task plan. Produce category totals,
+
+        task-cost mapping, formulas, assumptions, compliance checks, and
+
+        adjustment suggestions. Never invent mandatory rules; mark unknown
+
+        rules for manual review.
+
+        '
+      tools:
+      - knowledge_search_index
+      - knowledge_read_file
+      - web_search
+      - web_fetch
+      - web_extract
+      - proposal_save_markdown
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-budget-planning
+      max_turns: 6
+      timeout_seconds: 240
+    compliance-reviewer:
+      description: Independent read-only critic using a different model to find guide,
+        completeness, evidence, budget, and cross-section consistency failures.
+      system_prompt: 'You are a compliance review subagent for government research
+        project
+
+        declarations. Compare drafts against policy guides, templates, budget
+
+        Output language: use Simplified Chinese for headings, narrative summaries,
+        and final findings unless the parent task explicitly asks for another language.
+        Preserve original English proper nouns, standards numbers, paper titles, URLs,
+        and code identifiers.
+
+        rules, research foundation sources, team achievement sources, and
+
+        historical examples. Produce severity-ranked P0/P1/P2 issues with
+
+        evidence, risk, actionable revision, and suggested wording. Separate
+
+        factual noncompliance from writing-quality preferences.
+
+        '
+      tools:
+      - knowledge_search_index
+      - knowledge_read_file
+      - knowledge_search_evidence
+      - knowledge_read_evidence
+      - web_search
+      - web_fetch
+      - web_extract
+      skills:
+      - gov-proposal-web-research
+      - gov-proposal-compliance-review
+      max_turns: 6
+      timeout_seconds: 240
+memory:
+  enabled: true
+skills:
+  enabled: true
+tool_search:
+  enabled: true
+token_usage:
+  enabled: true
+title:
+  enabled: false
+summarization:
+  enabled: false
+execution_modes:
+  standard:
+    recursion_limit: 100
+    max_concurrent_subagents: 3
+  deep:
+    recursion_limit: 200
+    subagent_enabled: true
+    max_concurrent_subagents: 4
+    subagent_min_turns: 16
+    subagent_min_timeout_seconds: 600
+loop_detection:
+  enabled: true
+  warn_threshold: 3
+  hard_limit: 5
+  window_size: 20
+  max_tracked_threads: 100
+  tool_freq_warn: 30
+  tool_freq_hard_limit: 50
+  tool_freq_overrides:
+    web_search:
+      warn: 3
+      hard_limit: 5
+    web_fetch:
+      warn: 2
+      hard_limit: 4
+    web_extract:
+      warn: 3
+      hard_limit: 5
+database:
+  backend: sqlite
+  sqlite_dir: C:\Users\Administrator\GP Agent\.agent-base\data
+run_events:
+  backend: db
+  max_trace_content: 10240
+  track_token_usage: true
+checkpointer:
+  type: sqlite
+  connection_string: C:\Users\Administrator\GP Agent\.agent-base\data\checkpoints.db
+tool_groups:
+- name: web
+- name: filesystem
+tools:
+- name: ls
+  group: filesystem
+  use: deerflow.sandbox.tools:ls_tool
+- name: read_file
+  group: filesystem
+  use: deerflow.sandbox.tools:read_file_tool
+- name: glob
+  group: filesystem
+  use: deerflow.sandbox.tools:glob_tool
+  max_results: 200
+- name: grep
+  group: filesystem
+  use: deerflow.sandbox.tools:grep_tool
+  max_results: 100
+- name: web_search
+  group: web
+  use: deerflow.community.hybrid_search.tools:web_search_tool
+  max_results: 5
+  providers:
+  - serper
+  - ddgs
+  - simple_web
+  engine: bing_cn
+  simple_web_engines:
+  - bing_cn
+  - baidu
+  - duckduckgo
+  official_first: true
+  official_domains:
+  - gov.cn
+  - most.gov.cn
+  - nsfc.gov.cn
+  - miit.gov.cn
+  - ndrc.gov.cn
+  - mof.gov.cn
+  - moe.gov.cn
+  - samr.gov.cn
+  - cnipa.gov.cn
+  - chinastandard.gov.cn
+  - std.samr.gov.cn
+  - cnis.ac.cn
+  - edu.cn
+  - ac.cn
+  - cstec.org.cn
+  cache_enabled: true
+  cache_ttl_seconds: 900
+  timeout: 20
+- name: web_fetch
+  group: web
+  use: deerflow.community.hybrid_search.tools:web_fetch_tool
+  providers:
+  - jina_reader
+  - direct
+  timeout: 20
+  trust_env: true
+- name: web_extract
+  group: web
+  use: deerflow.community.simple_web.tools:web_extract_tool
+  timeout: 20
+  trust_env: true

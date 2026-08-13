@@ -1,0 +1,25 @@
+# Tool configuration examples for Agent Base.
+
+tools:
+  - name: ls
+    group: filesystem
+    use: deerflow.sandbox.tools:list_dir_tool
+
+  - name: read_file
+    group: filesystem
+    use: deerflow.sandbox.tools:read_file_tool
+
+  - name: write_file
+    group: filesystem
+    use: deerflow.sandbox.tools:write_file_tool
+
+  - name: bash
+    group: bash
+    use: deerflow.sandbox.tools:bash_tool
+
+tool_groups:
+  - name: filesystem
+    description: "Read and write files inside the active sandbox."
+
+  - name: bash
+    description: "Execute shell commands through the configured sandbox."

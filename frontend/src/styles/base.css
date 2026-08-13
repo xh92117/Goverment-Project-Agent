@@ -1,0 +1,96 @@
+/* ================= Reset & Base ================= */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  color: var(--c-ink);
+  background: var(--c-bg);
+  font-size: var(--app-font-size, 14px);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  transition:
+    background 0.3s ease,
+    color 0.3s ease;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+input,
+textarea,
+select {
+  font-family: inherit;
+  outline: none;
+  color: inherit;
+}
+
+a {
+  color: var(--c-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--c-accent);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--c-border-2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--c-muted);
+}
+
+/* ================= Shared Keyframes ================= */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.settings-section,
+.workspace,
+.messages,
+.settings-main {
+  animation: panelFadeIn 0.18s ease;
+}
+
+@keyframes panelFadeIn {
+  from {
+    opacity: 0.82;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
