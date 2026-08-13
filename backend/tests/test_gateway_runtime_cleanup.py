@@ -124,6 +124,14 @@ def test_production_compose_enables_fail_closed_multi_user_mode_by_default():
     assert "AGENT_BASE_STRICT_USER_CONTEXT=${AGENT_BASE_STRICT_USER_CONTEXT:-true}" in gateway_section
 
 
+def test_production_compose_persists_public_knowledge_separately():
+    content = _read("docker/docker-compose.yaml")
+    gateway_section = content.split("container_name: agent-base-gateway", 1)[1].split("env_file:", 1)[0]
+
+    assert "${AGENT_BASE_KNOWLEDGE_ROOT:-${AGENT_BASE_HOME}/public-knowledge}:/app/backend/.agent-base/public-knowledge" in gateway_section
+    assert "AGENT_BASE_KNOWLEDGE_ROOT=/app/backend/.agent-base/public-knowledge" in gateway_section
+
+
 def test_provisioner_compose_exposes_user_scoped_host_root():
     content = _read("docker/docker-compose.yaml")
     provisioner_section = content.split("container_name: agent-base-provisioner", 1)[1].split("env_file:", 1)[0]

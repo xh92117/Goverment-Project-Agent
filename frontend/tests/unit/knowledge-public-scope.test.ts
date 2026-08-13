@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   canManagePublicKnowledge,
+  canReadPublicKnowledge,
   defaultKnowledgeScope,
 } from "@/features/knowledge/knowledge-access";
 
@@ -34,7 +35,17 @@ describe("knowledge public scope", () => {
     expect(canManagePublicKnowledge({ kind: "anonymous" })).toBe(false);
   });
 
-  it("defaults administrators to public and members to private knowledge", () => {
+  it("allows every authenticated user to read the public knowledge base", () => {
+    expect(
+      canReadPublicKnowledge({
+        kind: "authenticated",
+        user: { id: "member", email: null, system_role: "user" },
+      }),
+    ).toBe(true);
+    expect(canReadPublicKnowledge({ kind: "anonymous" })).toBe(false);
+  });
+
+  it("defaults every authenticated user to public knowledge", () => {
     expect(
       defaultKnowledgeScope({
         kind: "authenticated",
@@ -46,10 +57,11 @@ describe("knowledge public scope", () => {
         kind: "authenticated",
         user: { id: "member", email: null, system_role: "user" },
       }),
-    ).toBe("private");
+    ).toBe("public");
   });
 
-  it("renders the public scope selector only for administrators", () => {
+  it("renders public scope for readers while retaining admin-only management", () => {
+    expect(pageSource).toContain("canReadPublic");
     expect(pageSource).toContain("canManagePublic");
     expect(pageSource).toContain('role="tablist"');
     expect(pageSource).toContain("公共知识库");

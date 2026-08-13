@@ -3,7 +3,6 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -114,7 +113,7 @@ def test_agent_tools_search_and_read_across_public_and_private(tmp_path, monkeyp
     assert "knowledge_scope: public" in read_text
 
 
-def test_regular_user_agent_tools_only_access_private_knowledge(tmp_path, monkeypatch):
+def test_regular_user_agent_tools_read_public_and_own_private_knowledge(tmp_path, monkeypatch):
     from deerflow.tools.builtins import knowledge_tools
 
     public_root = _configure_roots(tmp_path, monkeypatch)
@@ -131,9 +130,11 @@ def test_regular_user_agent_tools_only_access_private_knowledge(tmp_path, monkey
     search_text = knowledge_tools.knowledge_search_index_tool.func(query="", limit=10)
 
     assert "alice evidence" in search_text
-    assert "public guide" not in search_text
-    with pytest.raises(PermissionError, match="system administrators"):
-        knowledge_tools.knowledge_read_file_tool.func(file_path="public.md", scope="public")
+    assert "public guide" in search_text
+    assert "knowledge_scope: public" in search_text
+    read_text = knowledge_tools.knowledge_read_file_tool.func(file_path="public.md", scope="public")
+    assert "shared policy" in read_text
+    assert "knowledge_scope: public" in read_text
 
 
 def test_knowledge_api_searches_selected_scope_and_reads_public_for_no_auth_admin(tmp_path, monkeypatch):
@@ -183,7 +184,8 @@ def test_non_admin_cannot_create_public_knowledge_entry(tmp_path, monkeypatch):
             json={"title": "shared", "category": "test", "file_path": "shared.md"},
         )
 
-    assert public_list.status_code == 403
+    assert public_list.status_code == 200
+    assert [item["title"] for item in public_list.json()] == []
     assert response.status_code == 403
     assert knowledge_storage.list_knowledge_index_entries(user_id=None) == []
 

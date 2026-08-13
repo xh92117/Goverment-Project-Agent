@@ -79,6 +79,8 @@ services:
       - ${AGENT_BASE_EXTENSIONS_CONFIG_PATH:-${DEER_FLOW_EXTENSIONS_CONFIG_PATH}}:/app/backend/extensions_config.json:ro
       - ../skills:/app/skills:ro
       - ${AGENT_BASE_HOME}:/app/backend/.agent-base
+      # Shared public knowledge is persisted separately from per-user runtime data.
+      - ${AGENT_BASE_KNOWLEDGE_ROOT:-${AGENT_BASE_HOME}/public-knowledge}:/app/backend/.agent-base/public-knowledge
       # DooD: AioSandboxProvider starts sandbox containers via host Docker daemon
       - ${AGENT_BASE_DOCKER_SOCKET:-${DEER_FLOW_DOCKER_SOCKET}}:/var/run/docker.sock
       # CLI auth directories for auto-auth (Claude Code + Codex CLI)
@@ -102,6 +104,7 @@ services:
       - AGENT_BASE_CONFIG_PATH=/app/backend/config.yaml
       - AGENT_BASE_EXTENSIONS_CONFIG_PATH=/app/backend/extensions_config.json
       - AGENT_BASE_SKILLS_PATH=/app/skills
+      - AGENT_BASE_KNOWLEDGE_ROOT=/app/backend/.agent-base/public-knowledge
       - AGENT_BASE_CHANNELS_LANGGRAPH_URL=${AGENT_BASE_CHANNELS_LANGGRAPH_URL:-${DEER_FLOW_CHANNELS_LANGGRAPH_URL:-http://gateway:8001/api}}
       - AGENT_BASE_CHANNELS_GATEWAY_URL=${AGENT_BASE_CHANNELS_GATEWAY_URL:-${DEER_FLOW_CHANNELS_GATEWAY_URL:-http://gateway:8001}}
       - AGENT_BASE_INTERNAL_AUTH_TOKEN=${AGENT_BASE_INTERNAL_AUTH_TOKEN}
