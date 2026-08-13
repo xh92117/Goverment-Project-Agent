@@ -37,11 +37,17 @@ def _compact(value: str | None, *, limit: int = 240) -> str:
     return f"{text[:limit].rstrip()}..."
 
 
-def _can_access_public_knowledge() -> bool:
+def _can_read_public_knowledge() -> bool:
+    """Allow every authenticated user to read shared knowledge.
+
+    Public-library mutation remains administrator-only at the Gateway API
+    boundary.  Agent tools only search/read public content; user-owned content
+    is still resolved with the effective user id.
+    """
     user = get_current_user()
     if user is None:
         return not strict_user_context_enabled()
-    return getattr(user, "system_role", None) == "admin"
+    return True
 
 
 @tool("knowledge_search_index", parse_docstring=True)
@@ -98,7 +104,7 @@ def knowledge_search_index_tool(
         search_mode="keyword",
         limit=max(1, min(limit, 50)),
     )
-    if _can_access_public_knowledge():
+    if _can_read_public_knowledge():
         response = search_knowledge_index_entries_combined(
             request,
             user_id=get_effective_user_id(),
@@ -173,9 +179,9 @@ def knowledge_read_file_tool(
         max_chars: Maximum characters to return.
         scope: Source scope from search results: public, private, or auto.
     """
-    if not _can_access_public_knowledge():
+    if not _can_read_public_knowledge():
         if scope == "public":
-            raise PermissionError("Public knowledge is restricted to system administrators.")
+            raise PermissionError("Public knowledge requires an authenticated user context.")
         scope = "private"
     response = read_knowledge_file_combined(
         KnowledgeFileReadRequest(

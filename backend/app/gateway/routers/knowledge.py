@@ -89,8 +89,13 @@ async def _authorize_public_write(scope: KnowledgeScope, request: Request) -> No
 
 
 async def _authorize_public_read(scope: KnowledgeScope, request: Request) -> None:
-    if scope == "public":
-        await require_admin_user(request, resource="the public knowledge base")
+    """Permit public-library reads for every authenticated application user.
+
+    Authentication is enforced by the Gateway auth middleware.  Public writes
+    continue to pass through ``_authorize_public_write`` and remain restricted
+    to administrators.
+    """
+    return None
 
 
 async def _effective_read_scope(scope: KnowledgeReadScope, request: Request) -> KnowledgeReadScope:
@@ -99,12 +104,6 @@ async def _effective_read_scope(scope: KnowledgeReadScope, request: Request) -> 
         return scope
     if scope == "private":
         return scope
-    try:
-        await require_admin_user(request, resource="the public knowledge base")
-    except HTTPException as exc:
-        if exc.status_code in {401, 403}:
-            return "private"
-        raise
     return "auto"
 
 

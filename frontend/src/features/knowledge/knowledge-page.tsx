@@ -52,6 +52,7 @@ import type {
 } from "@/features/knowledge/api";
 import {
   canManagePublicKnowledge,
+  canReadPublicKnowledge,
   defaultKnowledgeScope,
 } from "@/features/knowledge/knowledge-access";
 import { modelProviderOptions } from "@/features/settings/model-providers";
@@ -194,8 +195,10 @@ export function KnowledgePage() {
     staleTime: 60_000,
   });
   const canManagePublic = canManagePublicKnowledge(authState.data);
+  const canReadPublic = canReadPublicKnowledge(authState.data);
   const [knowledgeScope, setKnowledgeScope] =
     useState<KnowledgeScope>("private");
+  const canEditKnowledge = knowledgeScope === "private" || canManagePublic;
   const [category, setCategory] = useState("");
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<KnowledgeIndexEntry | null>(null);
@@ -388,6 +391,7 @@ export function KnowledgePage() {
   });
 
   function startKnowledgeUpload(files: File[]) {
+    if (!canEditKnowledge) return;
     upload.reset();
     upload.mutate(files);
   }
@@ -609,6 +613,7 @@ export function KnowledgePage() {
     : "";
   const selectedPreviewPath = selected ? entryPreviewPath(selected) : "";
   const canEditPreview = Boolean(
+    canEditKnowledge &&
     selected &&
     typeof preview.data?.content === "string" &&
     isEditableKnowledgePath(selectedPreviewPath),
@@ -730,7 +735,7 @@ export function KnowledgePage() {
   }
 
   function selectKnowledgeScope(nextScope: KnowledgeScope) {
-    if (nextScope === "public" && !canManagePublic) return;
+    if (nextScope === "public" && !canReadPublic) return;
     setKnowledgeScope(nextScope);
     setCategory("");
     setQuery("");
@@ -783,7 +788,7 @@ export function KnowledgePage() {
             ) : null}
           </section>
 
-          {canManagePublic ? (
+          {canReadPublic ? (
             <div
               className="kb-scope-tabs"
               role="tablist"
@@ -808,7 +813,7 @@ export function KnowledgePage() {
               >
                 <ShieldCheckIcon aria-hidden="true" />
                 公共知识库
-                <span>管理员</span>
+                <span>{canManagePublic ? "管理员" : "只读"}</span>
               </button>
             </div>
           ) : (
@@ -835,7 +840,10 @@ export function KnowledgePage() {
               <button
                 type="button"
                 className="dropzone"
-                onClick={() => uploadRef.current?.click()}
+                onClick={() => {
+                  if (canEditKnowledge) uploadRef.current?.click();
+                }}
+                disabled={!canEditKnowledge}
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={(event) => {
                   event.preventDefault();
@@ -901,7 +909,7 @@ export function KnowledgePage() {
                   type="button"
                   className="organize-btn"
                   onClick={() => processIncoming.mutate()}
-                  disabled={processIncoming.isPending}
+                  disabled={!canEditKnowledge || processIncoming.isPending}
                 >
                   {processIncoming.isPending ? (
                     <Loader2Icon className="spin" />
@@ -914,7 +922,7 @@ export function KnowledgePage() {
                   type="button"
                   className="ghost-btn"
                   onClick={() => rebuild.mutate()}
-                  disabled={rebuild.isPending}
+                  disabled={!canEditKnowledge || rebuild.isPending}
                 >
                   {rebuild.isPending ? (
                     <Loader2Icon size={14} className="spin" />
@@ -1166,7 +1174,7 @@ export function KnowledgePage() {
                   清除搜索
                 </button>
               ) : null}
-              {confirmableEvidenceIds.length ? (
+              {canEditKnowledge && confirmableEvidenceIds.length ? (
                 <button
                   type="button"
                   className="ghost-btn"
@@ -1192,7 +1200,7 @@ export function KnowledgePage() {
                   批量确认证据 ({confirmableEvidenceIds.length})
                 </button>
               ) : null}
-              {nonEvidenceIds.length ? (
+              {canEditKnowledge && nonEvidenceIds.length ? (
                 <button
                   type="button"
                   className="ghost-btn"
@@ -1480,7 +1488,7 @@ export function KnowledgePage() {
                       <button
                         type="button"
                         onClick={() => remove.mutate(selected)}
-                        disabled={remove.isPending}
+                        disabled={!canEditKnowledge || remove.isPending}
                       >
                         <Trash2Icon size={14} />
                         删除
