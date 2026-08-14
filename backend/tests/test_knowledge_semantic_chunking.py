@@ -164,6 +164,49 @@ def test_semantic_chunk_planner_rejects_chunks_below_configured_minimum() -> Non
     assert any("低于 30" in warning for warning in result.warnings)
 
 
+def test_semantic_chunk_planner_accepts_one_complete_short_section() -> None:
+    chunking = KnowledgeChunkingConfig(
+        enabled=True,
+        minimum_section_chars=1,
+        minimum_chunk_chars=500,
+        target_chunk_chars=800,
+        maximum_chunk_chars=1_600,
+        unit_max_chars=600,
+        max_prompt_chars=4_000,
+    )
+    section = KnowledgeChunkingSection(
+        section_id="short-section",
+        heading="传感器耦合方式",
+        heading_path=("检测原理", "传感器耦合方式"),
+        units=(KnowledgeChunkingUnit(unit_id=1, text="不同耦合方式会影响传感器的固有频率。"),),
+    )
+    model = _StubModel(
+        {
+            "plans": [
+                {
+                    "section_id": "short-section",
+                    "chunks": [
+                        {
+                            "start_unit": 1,
+                            "end_unit": 1,
+                            "primary_section": "technical_solution",
+                            "secondary_sections": [],
+                            "content_role": "method_design",
+                        }
+                    ],
+                }
+            ]
+        }
+    )
+    planner = KnowledgeSemanticChunkPlanner(app_config=_app_config(chunking), model_factory=lambda **_: model)
+
+    result = planner.plan([section])
+
+    assert result.planned_sections == 1
+    assert result.fallback_sections == 0
+    assert result.plans["short-section"][0].start_unit == 1
+
+
 def test_disabled_semantic_chunk_planner_never_creates_model() -> None:
     chunking = KnowledgeChunkingConfig(enabled=False)
 

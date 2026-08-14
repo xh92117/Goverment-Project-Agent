@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from deerflow.knowledge.extractors import extract_text
+from deerflow.knowledge.semantic_classification import KnowledgeSemanticSourceClassifier
 from deerflow.knowledge.storage import _knowledge_root_path
 
 _DEFAULT_SUPPORTED_EXTENSIONS = {".md", ".markdown", ".txt", ".docx", ".pdf", ".xlsx", ".xls", ".csv", ".tsv"}
@@ -78,6 +79,7 @@ class KnowledgeOrganizeOptions:
     domain_rules: tuple[KnowledgeOrganizeRule, ...] = field(default_factory=lambda: tuple(KnowledgeOrganizeRule(name=name, keywords=keywords) for name, keywords in _DEFAULT_DOMAIN_RULES))
     dry_run: bool = False
     preview_chars: int = 4000
+    semantic_classification: bool = True
 
 
 @dataclass(frozen=True)
@@ -90,6 +92,12 @@ class KnowledgeOrganizedFile:
     domain: str | None = None
     status: str = "moved"
     reason: str | None = None
+    category_strategy: str | None = None
+    domain_strategy: str | None = None
+    classification_model: str | None = None
+    classification_confidence: float | None = None
+    classification_reason: str | None = None
+    classification_warning: str | None = None
 
 
 @dataclass(frozen=True)
@@ -193,6 +201,7 @@ def organize_options_from_config(config: dict[str, Any]) -> KnowledgeOrganizeOpt
         domain_rules=domain_rules or tuple(KnowledgeOrganizeRule(name=name, keywords=keywords) for name, keywords in _DEFAULT_DOMAIN_RULES),
         dry_run=bool(config.get("dry_run", False)),
         preview_chars=int(config.get("organize_preview_chars", 4000)),
+        semantic_classification=bool(config.get("semantic_classification", True)),
     )
 
 
@@ -231,13 +240,20 @@ def _rule_score(*, identity_text: str, heading_text: str, preview: str, keywords
     return score
 
 
-def _match_rule(
+@dataclass(frozen=True, slots=True)
+class _RuleMatch:
+    value: str | None
+    score: float
+    matched: bool
+
+
+def _match_rule_result(
     *,
     identity_text: str,
     preview: str,
     rules: tuple[KnowledgeOrganizeRule, ...],
     default: str | None,
-) -> str | None:
+) -> _RuleMatch:
     heading_text = _preview_headings(preview)
     scored = [
         (
@@ -253,7 +269,32 @@ def _match_rule(
         for index, rule in enumerate(rules)
     ]
     best_score, _, best_name = max(scored, default=(0.0, 0, default), key=lambda item: (item[0], -item[1]))
-    return best_name if best_score >= _MIN_CLASSIFICATION_SCORE else default
+    if best_score >= _MIN_CLASSIFICATION_SCORE:
+        return _RuleMatch(value=best_name, score=best_score, matched=True)
+    return _RuleMatch(value=default, score=best_score, matched=False)
+
+
+def _match_rule(
+    *,
+    identity_text: str,
+    preview: str,
+    rules: tuple[KnowledgeOrganizeRule, ...],
+    default: str | None,
+) -> str | None:
+    return _match_rule_result(identity_text=identity_text, preview=preview, rules=rules, default=default).value
+
+
+def _allowed_rule_values(rules: tuple[KnowledgeOrganizeRule, ...], default: str | None) -> tuple[str, ...]:
+    values: list[str] = []
+    for value in [default, *(rule.name for rule in rules)]:
+        cleaned = str(value or "").strip()
+        if cleaned and cleaned not in values:
+            values.append(cleaned)
+    return tuple(values)
+
+
+def _is_unresolved_default(value: str | None) -> bool:
+    return str(value or "").strip() in {"", "未分类", "通用", "其他", "未知"}
 
 
 def _deduplicated_target(path: Path) -> Path:
@@ -308,6 +349,7 @@ def organize_incoming_files(
     *,
     user_id: str | None = None,
     progress_callback: KnowledgeOrganizeProgressCallback | None = None,
+    semantic_classifier: KnowledgeSemanticSourceClassifier | None = None,
 ) -> KnowledgeOrganizeReport:
     """Move new files from `_incoming` into categorized knowledge-base folders."""
 
@@ -324,6 +366,7 @@ def organize_incoming_files(
     root = _knowledge_root_path(user_id=user_id)
     incoming = _resolve_relative_folder(root, options.incoming_path)
     supported_extensions = {_normalize_extension(ext) for ext in options.supported_extensions}
+    resolved_classifier = semantic_classifier
 
     files: list[KnowledgeOrganizedFile] = []
     if not incoming.exists():
@@ -382,14 +425,42 @@ def organize_incoming_files(
 
         preview = _file_preview(source, options.preview_chars)
         identity_text = f"{source.stem}\n{source_rel}"
-        category = _safe_folder_name(
-            _match_rule(identity_text=identity_text, preview=preview, rules=options.category_rules, default=options.default_category),
-            "未分类",
-        )
-        domain = _safe_folder_name(
-            _match_rule(identity_text=identity_text, preview=preview, rules=options.domain_rules, default=options.default_domain),
-            "通用",
-        )
+        category_match = _match_rule_result(identity_text=identity_text, preview=preview, rules=options.category_rules, default=options.default_category)
+        domain_match = _match_rule_result(identity_text=identity_text, preview=preview, rules=options.domain_rules, default=options.default_domain)
+        category = _safe_folder_name(category_match.value, "未分类")
+        domain = _safe_folder_name(domain_match.value, "通用")
+        category_strategy = "rules" if category_match.matched else "default"
+        domain_strategy = "rules" if domain_match.matched else "default"
+        classification_model: str | None = None
+        classification_confidence: float | None = None
+        classification_reason: str | None = None
+        classification_warning: str | None = None
+        unresolved_category = not category_match.matched and _is_unresolved_default(category_match.value)
+        unresolved_domain = not domain_match.matched and _is_unresolved_default(domain_match.value)
+        if options.semantic_classification and (unresolved_category or unresolved_domain):
+            if resolved_classifier is None:
+                resolved_classifier = KnowledgeSemanticSourceClassifier()
+            classification = resolved_classifier.classify(
+                source_path=source_rel,
+                title=source.stem,
+                headings=tuple(line.strip().lstrip("#").strip() for line in preview.splitlines() if re.match(r"^\s*#{1,6}\s+", line)),
+                preview=preview,
+                allowed_categories=_allowed_rule_values(options.category_rules, options.default_category),
+                allowed_domains=_allowed_rule_values(options.domain_rules, options.default_domain),
+                rule_category=category,
+                rule_domain=domain,
+            )
+            classification_warning = getattr(resolved_classifier, "last_warning", None)
+            if classification is not None:
+                classification_model = classification.model_name
+                classification_confidence = classification.confidence
+                classification_reason = classification.reason
+                if unresolved_category:
+                    category = _safe_folder_name(classification.category, "未分类")
+                    category_strategy = "llm_semantic"
+                if unresolved_domain:
+                    domain = _safe_folder_name(classification.domain, "通用")
+                    domain_strategy = "llm_semantic"
         target_dir = (root / category / domain).resolve()
         try:
             target_dir.relative_to(root)
@@ -408,6 +479,12 @@ def organize_incoming_files(
                     domain=domain,
                     status="skipped",
                     reason="duplicate content",
+                    category_strategy=category_strategy,
+                    domain_strategy=domain_strategy,
+                    classification_model=classification_model,
+                    classification_confidence=classification_confidence,
+                    classification_reason=classification_reason,
+                    classification_warning=classification_warning,
                 )
             )
             continue
@@ -434,6 +511,12 @@ def organize_incoming_files(
                 category=category,
                 domain=domain,
                 status="dry_run" if options.dry_run else "moved",
+                category_strategy=category_strategy,
+                domain_strategy=domain_strategy,
+                classification_model=classification_model,
+                classification_confidence=classification_confidence,
+                classification_reason=classification_reason,
+                classification_warning=classification_warning,
             )
         )
 

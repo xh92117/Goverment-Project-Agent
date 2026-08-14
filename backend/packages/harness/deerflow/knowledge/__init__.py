@@ -73,6 +73,7 @@ from .schemas import (
     KnowledgeSearchResponse,
     KnowledgeSearchResult,
 )
+from .semantic_classification import KnowledgeSemanticSourceClassifier, KnowledgeSourceClassification
 from .storage import (
     FileKnowledgeBaseStorage,
     KnowledgeBaseStorage,
@@ -146,6 +147,8 @@ __all__ = [
     "KnowledgeSearchRequest",
     "KnowledgeSearchResponse",
     "KnowledgeSearchResult",
+    "KnowledgeSemanticSourceClassifier",
+    "KnowledgeSourceClassification",
     "NoRelevantImageEvidenceError",
     "NoVerifiedImageEvidenceError",
     "build_knowledge_index_from_folder",

@@ -792,21 +792,35 @@ its fully indexed document body to avoid a duplicate chunk.
   source anchor alone is never sufficient because it can overwrite content.
 - When `knowledge_retrieval.chunking.enabled=true`,
   `deerflow.knowledge.semantic_chunking` uses exactly `AppConfig.knowledge_model`
-  as a constrained knowledge-construction subagent. It receives numbered
-  original-text units and may return only contiguous ranges plus allow-listed
+  as a constrained knowledge-construction subagent. Generator repairs common
+  flat MinerU numbering (`第N章`, `N.N`, `N.N.N`, `N）`) before candidate
+  generation and sends unmerged adjacent headings to the model with an explicit
+  `source_anchor` on every unit. The model receives numbered original-text units
+  and may return only contiguous ranges plus allow-listed
   classification metadata; generator code reconstructs every chunk from the
   original units and verifies complete ordered coverage, configured minimum and
-  maximum length, enum values, and extractive metadata. Never hardcode Qwen or choose a default model. A
+  maximum length, enum values, and extractive metadata. A complete source section
+  that is itself shorter than `minimum_chunk_chars` may remain intact so the model
+  can classify it; an undersized partial range is still invalid. Never hardcode Qwen or choose a default model. A
   missing/invalid selection, provider error, timeout, malformed JSON, or invalid
   range must preserve the current deterministic candidates. Each failed batch
   is retried up to `max_call_attempts`; only `circuit_breaker_failures`
   consecutive failed batches trip the per-build circuit breaker, so one transient
   failure cannot disable semantic planning for the rest of the build. Build stats expose model, calls, planned and
   fallback sections, failures, circuit-open state, and LLM-chunked chunk count.
+  Rule fallback spans regain deterministic sibling merging before the final
+  short-block postprocessor, while successful model spans keep their semantic
+  metadata and original anchor coverage.
 - Incoming organization uses a scored classifier: filename/path identity has
   more weight than headings, and headings have more weight than preview body.
   Specific keywords beat generic tokens, and a minimum score is required before
-  choosing a category/domain. Keep proposal-section classification separate
+  choosing a category/domain. If a dimension remains at an unresolved default,
+  `deerflow.knowledge.semantic_classification` uses the same selected
+  `knowledge_model` to choose only from the configured category/domain allow
+  lists. A confident rule dimension is never overwritten; low-confidence,
+  malformed, unavailable, or out-of-enum model output preserves the rule/default
+  result. Organization records expose strategy, model, confidence, reason, and
+  fallback warning per file. Keep proposal-section classification separate
   from physical source category; weak body occurrences of “standard” must not
   turn a technical method section into reference material.
 - `knowledge_search_index` exposes the group context. Supplying a returned

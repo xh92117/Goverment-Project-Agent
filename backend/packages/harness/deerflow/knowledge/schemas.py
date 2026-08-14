@@ -495,6 +495,7 @@ class KnowledgeIncrementalUpdateRequest(BaseModel):
     incremental: bool = True
     classification_rules: list[KnowledgeIncomingRule] = Field(default_factory=list)
     domain_rules: list[KnowledgeIncomingRule] = Field(default_factory=list)
+    semantic_classification: bool = True
 
 
 class KnowledgeOrganizedFileResult(BaseModel):
@@ -506,6 +507,12 @@ class KnowledgeOrganizedFileResult(BaseModel):
     domain: str | None = None
     status: str
     reason: str | None = None
+    category_strategy: str | None = None
+    domain_strategy: str | None = None
+    classification_model: str | None = None
+    classification_confidence: float | None = None
+    classification_reason: str | None = None
+    classification_warning: str | None = None
 
 
 class KnowledgeOrganizeResponse(BaseModel):

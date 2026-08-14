@@ -60,6 +60,7 @@ _SYSTEM_PROMPT = """你是“知识库构建子智能体”，负责政府科研
 2. 优先保持一个完整论点、方法步骤、研究对象或证据链；主题明显转换时切块。
 3. 避免仅按固定字数机械截断。尽量接近 target_chunk_chars，绝不能超过 maximum_chunk_chars。
 4. 短但独立的结论、指标、申报条件、创新点或证据可以单独成块；不要把不同业务语义强行合并。
+5. section 可能含多个相邻原始标题；每个单元的 source_anchor 是原始边界。可在语义连续时跨标题合并，主题或证据对象改变时必须切分。
 
 归类原则：
 1. primary_section 只能从输入给出的枚举中选择。若不属于申报书固定章节，选 source_category。
@@ -75,6 +76,7 @@ _SYSTEM_PROMPT = """你是“知识库构建子智能体”，负责政府科研
 class KnowledgeChunkingUnit:
     unit_id: int
     text: str
+    source_anchor: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +87,7 @@ class KnowledgeChunkingSection:
     units: tuple[KnowledgeChunkingUnit, ...]
     source_title: str = ""
     source_category: str = ""
+    source_anchors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -192,6 +195,8 @@ def _validate_plan(
     expected_start = 1
     ranges: list[KnowledgeChunkRange] = []
     unit_count = len(section.units)
+    section_chars = sum(len(unit.text) for unit in section.units) + max(0, unit_count - 1) * 2
+    complete_short_section = section_chars < minimum_chunk_chars and len(payload.chunks) == 1
     for chunk in payload.chunks:
         if chunk.start_unit != expected_start:
             raise ValueError(f"section {section.section_id} 的单元编号不连续，期望从 {expected_start} 开始。")
@@ -199,7 +204,8 @@ def _validate_plan(
             raise ValueError(f"section {section.section_id} 的单元范围越界。")
         selected_units = section.units[chunk.start_unit - 1 : chunk.end_unit]
         chunk_chars = sum(len(unit.text) for unit in selected_units) + max(0, len(selected_units) - 1) * 2
-        if chunk_chars < minimum_chunk_chars:
+        covers_complete_short_section = complete_short_section and chunk.start_unit == 1 and chunk.end_unit == unit_count
+        if chunk_chars < minimum_chunk_chars and not covers_complete_short_section:
             raise ValueError(f"section {section.section_id} 的模型分块长度 {chunk_chars} 低于 {minimum_chunk_chars}。")
         if chunk_chars > maximum_chunk_chars:
             raise ValueError(f"section {section.section_id} 的模型分块长度 {chunk_chars} 超过 {maximum_chunk_chars}。")
@@ -239,7 +245,16 @@ def _section_payload(section: KnowledgeChunkingSection) -> dict[str, object]:
         "source_category": section.source_category,
         "heading": section.heading,
         "structural_context": list(section.heading_path),
-        "units": [{"unit_id": unit.unit_id, "chars": len(unit.text), "text": unit.text} for unit in section.units],
+        "source_anchors": list(section.source_anchors or (section.heading,)),
+        "units": [
+            {
+                "unit_id": unit.unit_id,
+                "source_anchor": unit.source_anchor or section.heading,
+                "chars": len(unit.text),
+                "text": unit.text,
+            }
+            for unit in section.units
+        ],
     }
 
 
