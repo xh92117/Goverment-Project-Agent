@@ -772,6 +772,32 @@ async def get_build_job(
 
 
 @router.post(
+    "/index/process-incoming-jobs",
+    response_model=KnowledgeBuildJob,
+    response_model_exclude_none=True,
+    status_code=202,
+    summary="Start Incoming File Processing Job",
+    description="Start persisted incoming-file organization and knowledge-index building in the background.",
+)
+async def start_process_incoming_job(
+    body: KnowledgeIncrementalUpdateRequest,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeBuildJob:
+    """Return immediately while organization and indexing continue in the background."""
+
+    await _authorize_public_write(scope, request)
+    job_request = body.model_copy(update={"organize_incoming": True, "replace_existing": True})
+    try:
+        return get_knowledge_build_job_manager().submit_incremental(
+            job_request,
+            user_id=_scope_user_id(scope),
+        )
+    except KnowledgeBuildJobConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post(
     "/index/incremental-update",
     response_model=KnowledgeIncrementalUpdateResponse,
     response_model_exclude_none=True,

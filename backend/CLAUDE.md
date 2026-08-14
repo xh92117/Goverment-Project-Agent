@@ -814,12 +814,18 @@ its fully indexed document body to avoid a duplicate chunk.
   configured/actual signatures, and fallback state in SQLite metadata and copy
   them into `KnowledgeIndexBuildResponse.scale_stats`.
 - `POST /api/knowledge/index/build-jobs` is the non-blocking rebuild entry point.
+  `POST /api/knowledge/index/process-incoming-jobs` uses the same persisted job
+  contract for the complete organize-and-build pipeline. Its first 15 percent
+  represents per-file organization; extraction, semantic chunking, embedding
+  synchronization, and quality checks occupy the remaining progress range.
   Poll the returned job through `GET /api/knowledge/index/build-jobs/{job_id}`;
-  job snapshots live below `.index/build_jobs/` and intentionally omit the full
-  `entries` array. A root-level `.index/build.lock` prevents two writers from
-  rebuilding one library at once. The executor is process-local even though
-  snapshots are file-backed, so a horizontally scaled deployment needs a shared
-  durable queue for worker failover.
+  list recent jobs through `GET /api/knowledge/index/build-jobs`, and use those
+  persisted snapshots to restore UI state after refresh. Snapshots live below
+  `.index/build_jobs/`, include the organization summary when applicable, and
+  intentionally omit the full `entries` array. A root-level `.index/build.lock`
+  prevents two writers from rebuilding one library at once. The executor is
+  process-local even though snapshots are file-backed, so a horizontally scaled
+  deployment needs a shared durable queue for worker or server-restart failover.
 - Each build runs `deerflow.knowledge.quality` after synchronization and returns
   `quality_report`. Checks are format-neutral and cover indexed-body coverage,
   empty/short/oversized leaf chunks, exact duplicates, duplicate chunk paths,

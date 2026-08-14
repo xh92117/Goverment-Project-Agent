@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,8 @@ _DEFAULT_DOMAIN_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("人工智能", ("人工智能", "大模型", "深度学习", "机器学习")),
 )
 
+KnowledgeOrganizeProgressCallback = Callable[[int, int, float, str], None]
+
 
 @dataclass(frozen=True)
 class KnowledgeOrganizeRule:
@@ -66,18 +69,8 @@ class KnowledgeOrganizeOptions:
     default_category: str = "未分类"
     default_domain: str | None = "通用"
     supported_extensions: tuple[str, ...] = (".md", ".markdown", ".txt", ".docx", ".pdf", ".xlsx", ".xls", ".csv", ".tsv")
-    category_rules: tuple[KnowledgeOrganizeRule, ...] = field(
-        default_factory=lambda: tuple(
-            KnowledgeOrganizeRule(name=name, keywords=keywords)
-            for name, keywords in _DEFAULT_CATEGORY_RULES
-        )
-    )
-    domain_rules: tuple[KnowledgeOrganizeRule, ...] = field(
-        default_factory=lambda: tuple(
-            KnowledgeOrganizeRule(name=name, keywords=keywords)
-            for name, keywords in _DEFAULT_DOMAIN_RULES
-        )
-    )
+    category_rules: tuple[KnowledgeOrganizeRule, ...] = field(default_factory=lambda: tuple(KnowledgeOrganizeRule(name=name, keywords=keywords) for name, keywords in _DEFAULT_CATEGORY_RULES))
+    domain_rules: tuple[KnowledgeOrganizeRule, ...] = field(default_factory=lambda: tuple(KnowledgeOrganizeRule(name=name, keywords=keywords) for name, keywords in _DEFAULT_DOMAIN_RULES))
     dry_run: bool = False
     preview_chars: int = 4000
 
@@ -185,20 +178,14 @@ def organize_options_from_config(config: dict[str, Any]) -> KnowledgeOrganizeOpt
 
     category_rules = _rules_from_config(config.get("classification_rules"))
     domain_rules = _rules_from_config(config.get("domain_rules"))
-    supported_extensions = tuple(
-        _normalize_extension(str(ext))
-        for ext in config.get("organize_extensions", config.get("include_extensions", []))
-        if str(ext).strip()
-    )
+    supported_extensions = tuple(_normalize_extension(str(ext)) for ext in config.get("organize_extensions", config.get("include_extensions", [])) if str(ext).strip())
     return KnowledgeOrganizeOptions(
         incoming_path=str(config.get("incoming_path", "_incoming")),
         default_category=str(config.get("default_category", "未分类")),
         default_domain=config.get("default_domain", "通用"),
         supported_extensions=supported_extensions or tuple(sorted(_DEFAULT_SUPPORTED_EXTENSIONS)),
-        category_rules=category_rules
-        or tuple(KnowledgeOrganizeRule(name=name, keywords=keywords) for name, keywords in _DEFAULT_CATEGORY_RULES),
-        domain_rules=domain_rules
-        or tuple(KnowledgeOrganizeRule(name=name, keywords=keywords) for name, keywords in _DEFAULT_DOMAIN_RULES),
+        category_rules=category_rules or tuple(KnowledgeOrganizeRule(name=name, keywords=keywords) for name, keywords in _DEFAULT_CATEGORY_RULES),
+        domain_rules=domain_rules or tuple(KnowledgeOrganizeRule(name=name, keywords=keywords) for name, keywords in _DEFAULT_DOMAIN_RULES),
         dry_run=bool(config.get("dry_run", False)),
         preview_chars=int(config.get("organize_preview_chars", 4000)),
     )
@@ -269,8 +256,18 @@ def organize_incoming_files(
     options: KnowledgeOrganizeOptions | None = None,
     *,
     user_id: str | None = None,
+    progress_callback: KnowledgeOrganizeProgressCallback | None = None,
 ) -> KnowledgeOrganizeReport:
     """Move new files from `_incoming` into categorized knowledge-base folders."""
+
+    def report(current: int, total: int, percent: float, message: str) -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(current, total, percent, message)
+        except Exception:
+            # Progress reporting must never interrupt file organization.
+            return
 
     options = options or KnowledgeOrganizeOptions()
     root = _knowledge_root_path(user_id=user_id)
@@ -291,13 +288,15 @@ def organize_incoming_files(
     if not incoming.is_dir():
         raise ValueError("incoming_path must point to a directory.")
 
-    source_files = sorted(
-        path
-        for path in incoming.rglob("*")
-        if path.is_file()
-        and not any(part.lower().endswith(".pdf.assets") for part in path.relative_to(incoming).parts[:-1])
-    )
-    for source in source_files:
+    source_files = sorted(path for path in incoming.rglob("*") if path.is_file() and not any(part.lower().endswith(".pdf.assets") for part in path.relative_to(incoming).parts[:-1]))
+    report(0, len(source_files), 0.0, f"已发现 {len(source_files)} 个待整理文件。")
+    for source_index, source in enumerate(source_files, start=1):
+        report(
+            source_index - 1,
+            len(source_files),
+            100.0 * (source_index - 1) / max(1, len(source_files)),
+            f"正在识别并整理：{source.name}",
+        )
         if not source.exists():
             continue
         source_rel = _relative_to_root(root, source)
@@ -389,6 +388,7 @@ def organize_incoming_files(
 
     moved = sum(1 for item in files if item.status in {"moved", "dry_run"})
     skipped = sum(1 for item in files if item.status == "skipped")
+    report(len(source_files), len(source_files), 100.0, "待入库文件整理完成。")
     return KnowledgeOrganizeReport(
         root_path=str(root),
         incoming_path=_relative_to_root(root, incoming),

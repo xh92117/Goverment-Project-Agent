@@ -458,9 +458,11 @@ class KnowledgeBuildJob(BaseModel):
     """Persisted status and optional result for one background build."""
 
     job_id: str
+    operation: Literal["build", "organize_and_build"] = "build"
     state: KnowledgeBuildJobState = "queued"
     request: KnowledgeIndexBuildRequest
     progress: KnowledgeBuildJobProgress = Field(default_factory=KnowledgeBuildJobProgress)
+    organization: dict[str, Any] | None = None
     result: KnowledgeIndexBuildResponse | None = None
     error: str | None = None
     created_at: str

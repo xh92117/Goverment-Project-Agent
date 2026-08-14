@@ -99,6 +99,7 @@ export interface KnowledgeBuildQualityReport {
 
 export interface KnowledgeBuildJob {
   job_id: string;
+  operation?: "build" | "organize_and_build";
   state:
     | "queued"
     | "running"
@@ -112,6 +113,14 @@ export interface KnowledgeBuildJob {
     percent: number;
     message: string;
   };
+  organization?: {
+    root_path?: string;
+    incoming_path?: string;
+    dry_run?: boolean;
+    scanned?: number;
+    moved?: number;
+    skipped?: number;
+  } | null;
   result?: KnowledgeIndexBuildResult | null;
   error?: string | null;
   created_at: string;
@@ -282,9 +291,7 @@ export function updateKnowledgeModelSettings(modelName: string) {
   });
 }
 
-export function createKnowledgeImageModel(
-  model: KnowledgeModelCreateRequest,
-) {
+export function createKnowledgeImageModel(model: KnowledgeModelCreateRequest) {
   return apiJson<{
     models: KnowledgeModelOption[];
   }>("/api/models/config", {
@@ -519,12 +526,11 @@ export function saveKnowledgeFile(
   );
 }
 
-export async function buildKnowledgeIndex(
+export function startKnowledgeIndexBuild(
   folderPath?: string,
   scope: KnowledgeScope = "private",
-  onProgress?: (job: KnowledgeBuildJob) => void,
 ) {
-  let job = await apiJson<KnowledgeBuildJob>(
+  return apiJson<KnowledgeBuildJob>(
     `/api/knowledge/index/build-jobs?scope=${scope}`,
     {
       method: "POST",
@@ -537,6 +543,32 @@ export async function buildKnowledgeIndex(
       }),
     },
   );
+}
+
+export function listKnowledgeBuildJobs(
+  scope: KnowledgeScope = "private",
+  limit = 10,
+) {
+  return apiJson<KnowledgeBuildJob[]>(
+    `/api/knowledge/index/build-jobs?scope=${scope}&limit=${limit}`,
+  );
+}
+
+export function loadKnowledgeBuildJob(
+  jobId: string,
+  scope: KnowledgeScope = "private",
+) {
+  return apiJson<KnowledgeBuildJob>(
+    `/api/knowledge/index/build-jobs/${encodeURIComponent(jobId)}?scope=${scope}`,
+  );
+}
+
+export async function buildKnowledgeIndex(
+  folderPath?: string,
+  scope: KnowledgeScope = "private",
+  onProgress?: (job: KnowledgeBuildJob) => void,
+) {
+  let job = await startKnowledgeIndexBuild(folderPath, scope);
   onProgress?.(job);
   const deadline = Date.now() + 30 * 60 * 1000;
   while (job.state === "queued" || job.state === "running") {
@@ -546,9 +578,7 @@ export async function buildKnowledgeIndex(
       );
     }
     await new Promise((resolve) => setTimeout(resolve, 750));
-    job = await apiJson<KnowledgeBuildJob>(
-      `/api/knowledge/index/build-jobs/${encodeURIComponent(job.job_id)}?scope=${scope}`,
-    );
+    job = await loadKnowledgeBuildJob(job.job_id, scope);
     onProgress?.(job);
   }
   if (job.state === "failed") {
@@ -584,23 +614,23 @@ export function incrementalUpdateKnowledge(scope: KnowledgeScope = "private") {
 export function processIncomingAndBuildKnowledgeIndex(
   scope: KnowledgeScope = "private",
 ) {
-  return apiJson<{
-    organization?: { scanned?: number; moved?: number };
-    index_build: KnowledgeIndexBuildResult;
-  }>(`/api/knowledge/index/process-incoming?scope=${scope}`, {
-    method: "POST",
-    body: jsonBody({
-      incoming_path: "_incoming",
-      folder_path: "",
-      recursive: true,
-      replace_existing: true,
-      dry_run: false,
-      default_category: "未分类",
-      default_domain: "通用",
-      incremental: true,
-      project_types: ["科研项目申报"],
-    }),
-  });
+  return apiJson<KnowledgeBuildJob>(
+    `/api/knowledge/index/process-incoming-jobs?scope=${scope}`,
+    {
+      method: "POST",
+      body: jsonBody({
+        incoming_path: "_incoming",
+        folder_path: "",
+        recursive: true,
+        replace_existing: true,
+        dry_run: false,
+        default_category: "未分类",
+        default_domain: "通用",
+        incremental: true,
+        project_types: ["科研项目申报"],
+      }),
+    },
+  );
 }
 
 export function uploadKnowledgeFiles(

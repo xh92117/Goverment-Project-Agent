@@ -120,9 +120,11 @@ src/
 - The default entry is the government declaration assistant, not the generic
   base chat route.
 - Knowledge-base content is managed through the workspace knowledge area and
-  LLM-Wiki index files. Rebuilds use a background-job API, display persisted
-  server progress, and surface body coverage, quality score, and representative
-  quality issues when the build completes.
+  LLM-Wiki index files. Both index-only rebuilds and incoming-file organization
+  plus rebuilds use background-job APIs. The page reloads persisted server
+  progress every 750 ms while a job is active, so navigation or refresh does not
+  interrupt the server task, and it surfaces body coverage, quality score, and
+  representative quality issues when the build completes.
 - The knowledge-page header selects the chat model used for semantic chunking
   and metadata classification. All configured models are eligible, so the UI
   does not hardcode Qwen; text-only models remain valid for document builds,

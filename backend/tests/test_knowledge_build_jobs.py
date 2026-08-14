@@ -17,6 +17,7 @@ from deerflow.knowledge.build_jobs import (
 )
 from deerflow.knowledge.quality import evaluate_knowledge_build_quality
 from deerflow.knowledge.schemas import (
+    KnowledgeIncrementalUpdateRequest,
     KnowledgeIndexBuildRequest,
     KnowledgeIndexBuildResponse,
     KnowledgeIndexEntry,
@@ -29,6 +30,7 @@ def knowledge_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(knowledge_storage, "_knowledge_file_path", lambda *, user_id=None: root / "index.json")
     monkeypatch.setattr(knowledge_storage, "_knowledge_root_path", lambda *, user_id=None: root)
     monkeypatch.setattr(knowledge_generator, "_knowledge_root_path", lambda *, user_id=None: root)
+    monkeypatch.setattr("deerflow.knowledge.organizer._knowledge_root_path", lambda *, user_id=None: root)
     monkeypatch.setattr("deerflow.knowledge.build_jobs._knowledge_root_path", lambda *, user_id=None: root)
     monkeypatch.setattr(knowledge_storage, "_storage_instance", knowledge_storage.FileKnowledgeBaseStorage())
     return root
@@ -225,3 +227,63 @@ def test_background_build_api_returns_accepted_job_and_pollable_result(knowledge
     assert status.json()["state"] in {"completed", "completed_with_warnings"}
     assert status.json()["progress"]["percent"] == 100.0
     assert status.json()["result"]["quality_report"]["passed"] is True
+
+
+def test_background_incremental_job_organizes_then_builds_and_persists_result(knowledge_root: Path) -> None:
+    source = knowledge_root / "_incoming" / "国内外研究现状.md"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "# 国内外研究现状\n\n## 国外研究\n\n现有方法重点关注多源感知与智能分析。" * 8,
+        encoding="utf-8",
+    )
+    manager = KnowledgeBuildJobManager(max_workers=1)
+
+    submitted = manager.submit_incremental(
+        KnowledgeIncrementalUpdateRequest(
+            default_category="国内外研究现状",
+            default_domain="通用",
+        ),
+        user_id="alice",
+    )
+    completed = manager.wait(submitted.job_id, user_id="alice")
+    reloaded = KnowledgeBuildJobManager(max_workers=1).get(submitted.job_id, user_id="alice")
+
+    assert submitted.operation == "organize_and_build"
+    assert completed.state in {"completed", "completed_with_warnings"}
+    assert completed.organization is not None
+    assert completed.organization["scanned"] == 1
+    assert completed.organization["moved"] == 1
+    assert completed.result is not None
+    assert completed.result.scanned_files == 1
+    assert reloaded.organization == completed.organization
+    assert (knowledge_root / "国内外研究现状" / "通用" / source.name).is_file()
+
+
+def test_process_incoming_job_api_returns_immediately_and_is_pollable(knowledge_root: Path) -> None:
+    source = knowledge_root / "_incoming" / "预算说明.md"
+    source.parent.mkdir(parents=True)
+    source.write_text("# 预算说明\n\n设备费与测试化验加工费预算依据。" * 8, encoding="utf-8")
+    app = FastAPI()
+    app.include_router(knowledge_router.router)
+
+    with TestClient(app) as client:
+        started = client.post(
+            "/api/knowledge/index/process-incoming-jobs",
+            json={"folder_path": "", "incoming_path": "_incoming"},
+        )
+        assert started.status_code == 202
+        assert started.json()["operation"] == "organize_and_build"
+        job_id = started.json()["job_id"]
+
+        status = None
+        for _ in range(100):
+            status = client.get(f"/api/knowledge/index/build-jobs/{job_id}")
+            assert status.status_code == 200
+            if status.json()["state"] in {"completed", "completed_with_warnings", "failed"}:
+                break
+            sleep(0.02)
+
+    assert status is not None
+    assert status.json()["state"] in {"completed", "completed_with_warnings"}
+    assert status.json()["organization"]["moved"] == 1
+    assert status.json()["progress"]["percent"] == 100.0

@@ -29,18 +29,19 @@ import { probeAuthState } from "@/features/auth/route-policy";
 import { MarkdownRenderer } from "@/features/chat/markdown-renderer";
 import {
   batchReviewKnowledgeEvidence,
-  buildKnowledgeIndex,
   createKnowledgeImageModel,
   deleteKnowledgeFile,
   deleteKnowledgeEvidence,
   downloadKnowledgeFile,
   evaluateKnowledgeRecall,
+  listKnowledgeBuildJobs,
   listKnowledgeIndexPage,
   loadKnowledgeModelSettings,
   processIncomingAndBuildKnowledgeIndex,
   readKnowledgeFile,
   saveKnowledgeFile,
   searchKnowledgeIndex,
+  startKnowledgeIndexBuild,
   updateKnowledgeModelSettings,
   uploadKnowledgeFiles,
 } from "@/features/knowledge/api";
@@ -217,7 +218,6 @@ export function KnowledgePage() {
   const [pageOffset, setPageOffset] = useState(0);
   const [imageModelDialogOpen, setImageModelDialogOpen] = useState(false);
   const [imageModelDraft, setImageModelDraft] = useState<string | null>(null);
-  const [buildJob, setBuildJob] = useState<KnowledgeBuildJob | null>(null);
   const [imageModelForm, setImageModelForm] =
     useState<KnowledgeModelCreateRequest>(EMPTY_IMAGE_MODEL_FORM);
 
@@ -243,6 +243,22 @@ export function KnowledgePage() {
     () => index.data?.entries ?? [],
     [index.data?.entries],
   );
+
+  const buildJobs = useQuery({
+    queryKey: ["knowledge-build-jobs", knowledgeScope],
+    queryFn: () => listKnowledgeBuildJobs(knowledgeScope),
+    enabled: Boolean(authState.data),
+    refetchInterval: (current) =>
+      current.state.data?.some(
+        (job) => job.state === "queued" || job.state === "running",
+      )
+        ? 750
+        : false,
+    refetchOnWindowFocus: true,
+  });
+  const buildJob = buildJobs.data?.[0] ?? null;
+  const isBuildActive =
+    buildJob?.state === "queued" || buildJob?.state === "running";
 
   const imageModelSettings = useQuery({
     queryKey: ["knowledge-model-settings"],
@@ -398,46 +414,51 @@ export function KnowledgePage() {
     upload.mutate(files);
   }
 
+  function rememberBuildJob(job: KnowledgeBuildJob) {
+    queryClient.setQueryData<KnowledgeBuildJob[]>(
+      ["knowledge-build-jobs", knowledgeScope],
+      (current = []) => [
+        job,
+        ...current.filter((item) => item.job_id !== job.job_id),
+      ],
+    );
+  }
+
   const rebuild = useMutation({
-    mutationFn: () => {
-      setBuildJob(null);
-      return buildKnowledgeIndex(undefined, knowledgeScope, setBuildJob);
-    },
-    onSuccess: async (data) => {
-      setSelected(null);
-      setSearchResults(null);
-      setPageOffset(0);
-      if (
-        data.warnings?.some((warning) =>
-          /supports_vision|多模态模型|图片模型/.test(warning),
-        )
-      ) {
-        setImageModelDialogOpen(true);
-      }
-      await queryClient.invalidateQueries({
-        queryKey: ["knowledge-index-page"],
-      });
-    },
+    mutationFn: () => startKnowledgeIndexBuild(undefined, knowledgeScope),
+    onSuccess: rememberBuildJob,
   });
 
   const processIncoming = useMutation({
     mutationFn: () => processIncomingAndBuildKnowledgeIndex(knowledgeScope),
-    onSuccess: async (data) => {
-      setSelected(null);
-      setSearchResults(null);
-      setPageOffset(0);
-      if (
-        data.index_build.warnings?.some((warning) =>
-          /supports_vision|多模态模型|图片模型/.test(warning),
-        )
-      ) {
-        setImageModelDialogOpen(true);
-      }
-      await queryClient.invalidateQueries({
-        queryKey: ["knowledge-index-page"],
-      });
-    },
+    onSuccess: rememberBuildJob,
   });
+
+  const handledBuildJobRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !buildJob ||
+      buildJob.state === "queued" ||
+      buildJob.state === "running"
+    ) {
+      return;
+    }
+    const completedKey = `${knowledgeScope}:${buildJob.job_id}:${buildJob.state}`;
+    if (handledBuildJobRef.current === completedKey) return;
+    handledBuildJobRef.current = completedKey;
+    setSelected(null);
+    setSearchResults(null);
+    setPageOffset(0);
+    void queryClient.invalidateQueries({ queryKey: ["knowledge-index-page"] });
+    if (
+      canManagePublic &&
+      buildJob.result?.warnings?.some((warning) =>
+        /supports_vision|多模态模型|图片模型/.test(warning),
+      )
+    ) {
+      setImageModelDialogOpen(true);
+    }
+  }, [buildJob, canManagePublic, knowledgeScope, queryClient]);
 
   const search = useMutation({
     mutationFn: ({ text }: { text: string }) =>
@@ -596,17 +617,17 @@ export function KnowledgePage() {
     },
   });
 
-  const buildStats = processIncoming.data?.index_build ?? rebuild.data;
-  const running =
-    upload.isPending || processIncoming.isPending || rebuild.isPending;
+  const buildStats = buildJob?.result ?? null;
   const totalIndexEntries = index.data?.total ?? indexEntries.length;
-  const progressWidth = running
-    ? rebuild.isPending && buildJob
-      ? `${Math.max(2, Math.min(100, buildJob.progress.percent))}%`
-      : "68%"
-    : buildStats
-      ? "100%"
-      : `${Math.min(100, Math.max(8, totalIndexEntries * 8))}%`;
+  const progressPercent =
+    isBuildActive && buildJob
+      ? Math.max(2, Math.min(100, buildJob.progress.percent))
+      : processIncoming.isPending || rebuild.isPending
+        ? 2
+        : buildStats
+          ? 100
+          : Math.min(100, Math.max(8, totalIndexEntries * 8));
+  const progressWidth = `${progressPercent}%`;
   const parserSummary = buildStats?.parser_counts
     ? Object.entries(buildStats.parser_counts)
         .map(([name, count]) => `${name} ${count}`)
@@ -631,11 +652,15 @@ export function KnowledgePage() {
       ? upload.error.message
       : "上传失败，请检查文件格式、大小或服务状态后重试。";
   const ingestErrorMessage =
-    processIncoming.error instanceof Error
-      ? processIncoming.error.message
-      : rebuild.error instanceof Error
-        ? rebuild.error.message
-        : "整理入库失败，请稍后重试。";
+    buildJob?.state === "failed"
+      ? (buildJob.error ?? "知识库构建失败，请查看服务端日志。")
+      : processIncoming.error instanceof Error
+        ? processIncoming.error.message
+        : rebuild.error instanceof Error
+          ? rebuild.error.message
+          : buildJobs.error instanceof Error
+            ? buildJobs.error.message
+            : "整理入库失败，请稍后重试。";
   const hasUploadedDocuments = Boolean(
     upload.data?.files?.some((file) => !file.evidence_id),
   );
@@ -915,9 +940,16 @@ export function KnowledgePage() {
                   type="button"
                   className="organize-btn"
                   onClick={() => processIncoming.mutate()}
-                  disabled={!canEditKnowledge || processIncoming.isPending}
+                  disabled={
+                    !canEditKnowledge ||
+                    isBuildActive ||
+                    processIncoming.isPending ||
+                    rebuild.isPending
+                  }
                 >
-                  {processIncoming.isPending ? (
+                  {processIncoming.isPending ||
+                  (isBuildActive &&
+                    buildJob?.operation === "organize_and_build") ? (
                     <Loader2Icon className="spin" />
                   ) : (
                     <RefreshCwIcon />
@@ -928,9 +960,16 @@ export function KnowledgePage() {
                   type="button"
                   className="ghost-btn"
                   onClick={() => rebuild.mutate()}
-                  disabled={!canEditKnowledge || rebuild.isPending}
+                  disabled={
+                    !canEditKnowledge ||
+                    isBuildActive ||
+                    rebuild.isPending ||
+                    processIncoming.isPending
+                  }
                 >
-                  {rebuild.isPending ? (
+                  {rebuild.isPending ||
+                  (isBuildActive &&
+                    buildJob?.operation !== "organize_and_build") ? (
                     <Loader2Icon size={14} className="spin" />
                   ) : (
                     <RefreshCwIcon size={14} />
@@ -938,12 +977,22 @@ export function KnowledgePage() {
                   仅重建索引
                 </button>
               </div>
-              {processIncoming.isError || rebuild.isError ? (
+              {processIncoming.isError ||
+              rebuild.isError ||
+              buildJobs.isError ||
+              buildJob?.state === "failed" ? (
                 <div className="kb-error" role="alert">
                   {ingestErrorMessage}
                 </div>
               ) : null}
-              <div className="progress-bar">
+              <div
+                className="progress-bar"
+                role="progressbar"
+                aria-label="知识库构建进度"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(progressPercent)}
+              >
                 <div
                   className="progress-fill"
                   style={{ width: progressWidth }}
@@ -951,24 +1000,33 @@ export function KnowledgePage() {
               </div>
               <div className="progress-text">
                 <span>
-                  {rebuild.isPending && buildJob
+                  {isBuildActive && buildJob
                     ? buildJob.progress.message || "正在构建知识库"
-                    : running
-                      ? "正在处理"
-                      : buildStats
-                        ? `已扫描 ${buildStats.scanned_files} 个文件`
-                        : `${totalIndexEntries} 个索引条目`}
+                    : processIncoming.isPending || rebuild.isPending
+                      ? "正在创建后台任务"
+                      : upload.isPending
+                        ? "正在上传文件"
+                        : buildJob?.state === "failed"
+                          ? "知识库构建失败"
+                          : buildStats
+                            ? `已扫描 ${buildStats.scanned_files} 个文件`
+                            : `${totalIndexEntries} 个索引条目`}
                 </span>
                 <span>
-                  {rebuild.isPending && buildJob
+                  {isBuildActive && buildJob
                     ? buildJob.progress.total > 0
                       ? `${buildJob.progress.current} / ${buildJob.progress.total} · ${Math.round(buildJob.progress.percent)}%`
                       : `${Math.round(buildJob.progress.percent)}%`
                     : buildStats
                       ? `新增 ${buildStats.created} / 更新 ${buildStats.updated} / 复用 ${buildStats.reused ?? 0}`
-                      : `${processIncoming.data?.organization?.moved ?? 0} 个文件已整理`}
+                      : `${buildJob?.organization?.moved ?? 0} 个文件已整理`}
                 </span>
               </div>
+              {isBuildActive ? (
+                <div className="upload-status-note">
+                  任务正在服务器后台执行，刷新或离开本页面不会中断构建。
+                </div>
+              ) : null}
               {buildStats?.scale_stats ? (
                 <div className="progress-text">
                   <span>
@@ -1603,7 +1661,9 @@ export function KnowledgePage() {
             <div className="modal-head">
               <div>
                 <h2 id="knowledge-image-model-title">知识库构建模型</h2>
-                <p>所选模型用于语义分块和元数据归类；支持视觉时也用于图片识别。</p>
+                <p>
+                  所选模型用于语义分块和元数据归类；支持视觉时也用于图片识别。
+                </p>
               </div>
               <button
                 type="button"

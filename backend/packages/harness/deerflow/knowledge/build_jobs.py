@@ -6,14 +6,18 @@ import json
 import threading
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import asdict
 from pathlib import Path
 from time import time
 
 from deerflow.knowledge.generator import build_knowledge_index_from_folder
+from deerflow.knowledge.organizer import organize_incoming_files, organize_options_from_config
 from deerflow.knowledge.schemas import (
     KnowledgeBuildJob,
     KnowledgeBuildJobProgress,
+    KnowledgeIncrementalUpdateRequest,
     KnowledgeIndexBuildRequest,
+    KnowledgeIndexBuildResponse,
 )
 from deerflow.knowledge.storage import _knowledge_root_path
 from deerflow.utils.time import now_iso
@@ -123,6 +127,7 @@ class KnowledgeBuildJobManager:
         self._claim_root_lock(root, job_id)
         job = KnowledgeBuildJob(
             job_id=job_id,
+            operation="build",
             request=request,
             created_at=now_iso(),
             progress=KnowledgeBuildJobProgress(message="构建任务已排队。"),
@@ -133,7 +138,56 @@ class KnowledgeBuildJobManager:
                 self._jobs[key] = job
                 self._persist(root, job)
                 self._cleanup_old_jobs(root)
-                future = self._executor.submit(self._run, root, job_id, request, user_id)
+                future = self._executor.submit(self._run_build, root, job_id, request, user_id)
+                self._futures[key] = future
+                future.add_done_callback(lambda completed, job_key=key: self._forget_future(job_key, completed))
+        except Exception:
+            self._release_root_lock(root, job_id)
+            raise
+        return job.model_copy(deep=True)
+
+    def submit_incremental(
+        self,
+        request: KnowledgeIncrementalUpdateRequest,
+        *,
+        user_id: str | None,
+    ) -> KnowledgeBuildJob:
+        """Queue incoming-file organization and index building as one job."""
+
+        root = _knowledge_root_path(user_id=user_id)
+        root.mkdir(parents=True, exist_ok=True)
+        job_id = uuid.uuid4().hex
+        self._claim_root_lock(root, job_id)
+        index_request = KnowledgeIndexBuildRequest(
+            folder_path=request.folder_path,
+            recursive=request.recursive,
+            include_extensions=request.include_extensions,
+            replace_existing=request.replace_existing,
+            project_types=request.project_types,
+            max_files=request.max_files,
+            incremental=request.incremental,
+        )
+        job = KnowledgeBuildJob(
+            job_id=job_id,
+            operation="organize_and_build",
+            request=index_request,
+            created_at=now_iso(),
+            progress=KnowledgeBuildJobProgress(message="整理与构建任务已排队。"),
+        )
+        key = (str(root), job_id)
+        try:
+            with self._lock:
+                self._jobs[key] = job
+                self._persist(root, job)
+                self._cleanup_old_jobs(root)
+                future = self._executor.submit(
+                    self._run_incremental,
+                    root,
+                    job_id,
+                    request,
+                    index_request,
+                    user_id,
+                )
                 self._futures[key] = future
                 future.add_done_callback(lambda completed, job_key=key: self._forget_future(job_key, completed))
         except Exception:
@@ -155,7 +209,71 @@ class KnowledgeBuildJobManager:
             self._persist(root, updated)
             return updated
 
-    def _run(
+    def _finish_build(
+        self,
+        root: Path,
+        job_id: str,
+        result: KnowledgeIndexBuildResponse,
+    ) -> None:
+        compact_result = result.model_copy(update={"entries": []})
+        quality = result.quality_report
+        completed_state = "completed_with_warnings" if result.warnings or (quality is not None and (not quality.passed or quality.warning_count > 0)) else "completed"
+        total = result.scale_stats.get("index_entries_total", 0)
+        self._update(
+            root,
+            job_id,
+            state=completed_state,
+            result=compact_result,
+            finished_at=now_iso(),
+            progress=KnowledgeBuildJobProgress(
+                stage="completed",
+                current=total,
+                total=total,
+                percent=100.0,
+                message="知识库构建完成。",
+            ),
+        )
+
+    def _fail_build(self, root: Path, job_id: str, exc: Exception) -> None:
+        self._update(
+            root,
+            job_id,
+            state="failed",
+            error=str(exc) or exc.__class__.__name__,
+            finished_at=now_iso(),
+            progress=KnowledgeBuildJobProgress(stage="failed", percent=100.0, message="知识库构建失败。"),
+        )
+
+    def _build_index(
+        self,
+        root: Path,
+        job_id: str,
+        request: KnowledgeIndexBuildRequest,
+        user_id: str | None,
+        *,
+        percent_start: float = 0.0,
+        percent_span: float = 100.0,
+    ) -> KnowledgeIndexBuildResponse:
+        def progress(stage: str, current: int, total: int, percent: float, message: str) -> None:
+            self._update(
+                root,
+                job_id,
+                progress=KnowledgeBuildJobProgress(
+                    stage=stage,
+                    current=current,
+                    total=total,
+                    percent=min(100.0, percent_start + percent_span * percent / 100.0),
+                    message=message,
+                ),
+            )
+
+        return build_knowledge_index_from_folder(
+            request,
+            user_id=user_id,
+            progress_callback=progress,
+        )
+
+    def _run_build(
         self,
         root: Path,
         job_id: str,
@@ -169,52 +287,75 @@ class KnowledgeBuildJobManager:
             started_at=now_iso(),
             progress=KnowledgeBuildJobProgress(stage="initializing", percent=0.0, message="构建任务已启动。"),
         )
+        try:
+            self._finish_build(root, job_id, self._build_index(root, job_id, request, user_id))
+        except Exception as exc:
+            self._fail_build(root, job_id, exc)
+        finally:
+            self._release_root_lock(root, job_id)
 
-        def progress(stage: str, current: int, total: int, percent: float, message: str) -> None:
+    def _run_incremental(
+        self,
+        root: Path,
+        job_id: str,
+        request: KnowledgeIncrementalUpdateRequest,
+        index_request: KnowledgeIndexBuildRequest,
+        user_id: str | None,
+    ) -> None:
+        self._update(
+            root,
+            job_id,
+            state="running",
+            started_at=now_iso(),
+            progress=KnowledgeBuildJobProgress(stage="organizing", percent=1.0, message="正在准备待入库文件。"),
+        )
+
+        def organize_progress(current: int, total: int, percent: float, message: str) -> None:
             self._update(
                 root,
                 job_id,
                 progress=KnowledgeBuildJobProgress(
-                    stage=stage,
+                    stage="organizing",
                     current=current,
                     total=total,
-                    percent=percent,
+                    percent=1.0 + 13.0 * percent / 100.0,
                     message=message,
                 ),
             )
 
         try:
-            result = build_knowledge_index_from_folder(
-                request,
-                user_id=user_id,
-                progress_callback=progress,
-            )
-            compact_result = result.model_copy(update={"entries": []})
-            quality = result.quality_report
-            completed_state = "completed_with_warnings" if result.warnings or (quality is not None and (not quality.passed or quality.warning_count > 0)) else "completed"
+            if request.organize_incoming:
+                report = organize_incoming_files(
+                    organize_options_from_config(request.model_dump(mode="json")),
+                    user_id=user_id,
+                    progress_callback=organize_progress,
+                )
+                organization = asdict(report)
+            else:
+                organization = None
             self._update(
                 root,
                 job_id,
-                state=completed_state,
-                result=compact_result,
-                finished_at=now_iso(),
+                organization=organization,
                 progress=KnowledgeBuildJobProgress(
-                    stage="completed",
-                    current=result.scale_stats.get("index_entries_total", 0),
-                    total=result.scale_stats.get("index_entries_total", 0),
-                    percent=100.0,
-                    message="知识库构建完成。",
+                    stage="organization_completed",
+                    current=organization.get("scanned", 0) if organization else 0,
+                    total=organization.get("scanned", 0) if organization else 0,
+                    percent=15.0,
+                    message=(f"文件整理完成：移动 {organization.get('moved', 0)} 个，开始构建索引。" if organization else "开始构建知识库索引。"),
                 ),
             )
-        except Exception as exc:
-            self._update(
+            result = self._build_index(
                 root,
                 job_id,
-                state="failed",
-                error=str(exc) or exc.__class__.__name__,
-                finished_at=now_iso(),
-                progress=KnowledgeBuildJobProgress(stage="failed", percent=100.0, message="知识库构建失败。"),
+                index_request,
+                user_id,
+                percent_start=15.0,
+                percent_span=85.0,
             )
+            self._finish_build(root, job_id, result)
+        except Exception as exc:
+            self._fail_build(root, job_id, exc)
         finally:
             self._release_root_lock(root, job_id)
 

@@ -102,14 +102,17 @@ evidence; a missing-vision warning opens the same dialog without blocking text
 indexing. Keep this entry in the header instead of restoring applicant or
 image-preview panels.
 
-The index-only rebuild action starts `POST /api/knowledge/index/build-jobs` and
-polls the returned job instead of holding one HTTP request open. Render the
-persisted `progress.message`, counts, and percentage, then show the compact
-result's `quality_report` with its score, body coverage, error/warning totals,
-and representative issues. Treat `completed_with_warnings` as a successful
-response with visible diagnostics; only `failed` is a request error. The
-organize-and-build action still uses its compatibility endpoint until the
-incremental pipeline receives its own background job contract.
+The index-only rebuild action starts `POST /api/knowledge/index/build-jobs`; the
+organize-and-build action starts
+`POST /api/knowledge/index/process-incoming-jobs`. Neither action may hold one
+HTTP request open for the build. Load recent persisted jobs on page entry and
+poll every 750 ms while the latest job is queued or running, so a browser refresh
+recovers the same progress snapshot without interrupting server execution.
+Render `progress.message`, counts, percentage, and the organization summary,
+then show the compact result's `quality_report` with its score, body coverage,
+error/warning totals, and representative issues. Treat
+`completed_with_warnings` as a successful response with visible diagnostics;
+only `failed` is a build error.
 
 The existing knowledge-tree toolbar conditionally exposes batch evidence review
 actions, without restoring the removed image preview section. Only visible
