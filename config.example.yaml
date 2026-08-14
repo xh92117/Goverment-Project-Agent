@@ -1,4 +1,4 @@
-config_version: 16
+config_version: 17
 log_level: info
 models:
 - name: deepseek-v4-flash
@@ -48,7 +48,8 @@ knowledge_retrieval:
   semantic_min_similarity: 0.08
   chunking:
     # The model selected in the knowledge page plans boundaries and metadata.
-    # Any model failure falls back to rule chunking.
+    # Invalid plans are rejected, each batch is retried, and repeated batch
+    # failures open a circuit breaker before rule chunking handles the rest.
     enabled: true
     minimum_section_chars: 300
     minimum_chunk_chars: 500
@@ -57,6 +58,8 @@ knowledge_retrieval:
     unit_max_chars: 600
     max_prompt_chars: 24000
     max_sections_per_call: 8
+    max_call_attempts: 2
+    circuit_breaker_failures: 3
   embedding:
     # Disabled by default: full-text + local feature-hash retrieval works offline.
     # Enable and configure any LangChain-compatible Embeddings provider for real vectors.
@@ -71,7 +74,11 @@ knowledge_retrieval:
   quality:
     enabled: true
     minimum_body_coverage: 0.98
-    minimum_leaf_chunk_chars: 80
+    # Tiny non-atomic chunks are errors in multi-chunk documents below the
+    # critical threshold, warnings below the target, and tracked by ratio.
+    critical_leaf_chunk_chars: 120
+    minimum_leaf_chunk_chars: 500
+    maximum_short_chunk_ratio: 0.05
     maximum_chunk_chars: 3600
     max_reported_issues: 200
 sandbox:

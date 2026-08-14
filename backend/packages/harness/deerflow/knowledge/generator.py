@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from deerflow.config import get_app_config
+from deerflow.config.knowledge_retrieval_config import KnowledgeChunkingConfig
 from deerflow.knowledge.content_store import rewrite_markdown_asset_links
 from deerflow.knowledge.extractors import extract_text_with_metadata
 from deerflow.knowledge.quality import evaluate_knowledge_build_quality
@@ -74,9 +75,6 @@ _SOURCE_FILE_WARNING_THRESHOLD = 300
 _INDEX_ENTRY_WARNING_THRESHOLD = 1000
 _INDEX_JSON_BYTES_WARNING_THRESHOLD = 5 * 1024 * 1024
 _BUILD_SECONDS_WARNING_THRESHOLD = 60.0
-_TARGET_CHUNK_CHARS = 1800
-_MAX_CHUNK_CHARS = 3200
-_MIN_CHUNK_CHARS = 300
 _MAX_PARENT_SUMMARY_CHARS = 900
 _GENERIC_TITLES = {"报告正文", "正文", "申报书", "项目申报书"}
 _LOW_VALUE_EXACT_HEADINGS = {
@@ -277,6 +275,7 @@ class _SemanticChunkCandidate:
     semantic_technical_terms: tuple[str, ...] = field(default_factory=tuple)
     semantic_methods: tuple[str, ...] = field(default_factory=tuple)
     semantic_research_objects: tuple[str, ...] = field(default_factory=tuple)
+    atomic_short: bool = False
 
 
 @dataclass(frozen=True)
@@ -622,36 +621,36 @@ def _parent_summary_content(block: _StructuredHeadingBlock, *, max_chars: int = 
     return "\n".join(lines).strip()
 
 
-def _text_units(text: str) -> list[str]:
+def _text_units(text: str, *, config: KnowledgeChunkingConfig) -> list[str]:
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n", text) if part.strip()]
     if not paragraphs:
         paragraphs = [text.strip()] if text.strip() else []
     units: list[str] = []
     for paragraph in paragraphs:
-        if len(paragraph) <= _MAX_CHUNK_CHARS:
+        if len(paragraph) <= config.maximum_chunk_chars:
             units.append(paragraph)
             continue
         sentences = [part.strip() for part in re.split(r"(?<=[。！？；;.!?])", paragraph) if part.strip()]
         if len(sentences) <= 1:
-            units.extend(paragraph[index : index + _TARGET_CHUNK_CHARS] for index in range(0, len(paragraph), _TARGET_CHUNK_CHARS))
+            units.extend(paragraph[index : index + config.target_chunk_chars] for index in range(0, len(paragraph), config.target_chunk_chars))
         else:
             units.extend(sentences)
     return units
 
 
-def _split_leaf_block(heading: str, block: str) -> list[tuple[str, str]]:
-    if len(block) <= _MAX_CHUNK_CHARS:
+def _split_leaf_block(heading: str, block: str, *, config: KnowledgeChunkingConfig) -> list[tuple[str, str]]:
+    if len(block) <= config.maximum_chunk_chars:
         return [(heading, block)]
 
     lines = block.splitlines()
     body_lines = lines[1:] if lines and _MARKDOWN_HEADING_RE.match(lines[0]) else lines
-    units = _text_units("\n".join(body_lines).strip())
+    units = _text_units("\n".join(body_lines).strip(), config=config)
     parts: list[str] = []
     current: list[str] = []
     current_chars = 0
     for unit in units:
         unit_chars = len(unit)
-        if current and current_chars + unit_chars > _TARGET_CHUNK_CHARS and current_chars >= _MIN_CHUNK_CHARS:
+        if current and current_chars + unit_chars > config.target_chunk_chars and current_chars >= config.minimum_chunk_chars:
             parts.append("\n\n".join(current).strip())
             current = []
             current_chars = 0
@@ -659,6 +658,28 @@ def _split_leaf_block(heading: str, block: str) -> list[tuple[str, str]]:
         current_chars += unit_chars
     if current:
         parts.append("\n\n".join(current).strip())
+
+    if len(parts) > 1 and len(parts[-1]) < config.minimum_chunk_chars:
+        tail = parts.pop()
+        previous = parts.pop()
+        combined_units = _text_units(f"{previous}\n\n{tail}", config=config)
+        split_at = len(combined_units)
+        tail_chars = 0
+        for index in range(len(combined_units) - 1, 0, -1):
+            tail_chars += len(combined_units[index])
+            previous_chars = len("\n\n".join(combined_units[:index]))
+            if tail_chars >= config.minimum_chunk_chars and previous_chars >= config.minimum_chunk_chars:
+                split_at = index
+                break
+        if split_at < len(combined_units):
+            parts.extend(
+                [
+                    "\n\n".join(combined_units[:split_at]).strip(),
+                    "\n\n".join(combined_units[split_at:]).strip(),
+                ]
+            )
+        else:
+            parts.append(f"{previous}\n\n{tail}".strip())
 
     split_blocks: list[tuple[str, str]] = []
     total = len(parts)
@@ -725,14 +746,14 @@ def _is_thin_leaf_block(block: _StructuredHeadingBlock) -> bool:
     return body == _compact_heading_text(block.heading)
 
 
-def _generic_body_candidates(content: str, category: str) -> list[_SemanticChunkCandidate]:
+def _generic_body_candidates(content: str, category: str, *, config: KnowledgeChunkingConfig) -> list[_SemanticChunkCandidate]:
     """Keep useful text even when the parser cannot infer a document taxonomy."""
 
     cleaned = content.strip()
     if not cleaned:
         return []
     candidates: list[_SemanticChunkCandidate] = []
-    for part_heading, part_content in _split_leaf_block("正文", cleaned):
+    for part_heading, part_content in _split_leaf_block("正文", cleaned, config=config):
         candidates.append(
             _SemanticChunkCandidate(
                 level=1,
@@ -750,7 +771,7 @@ def _generic_body_candidates(content: str, category: str) -> list[_SemanticChunk
     return candidates
 
 
-def _merge_short_sibling_candidates(candidates: list[_SemanticChunkCandidate]) -> list[_SemanticChunkCandidate]:
+def _merge_short_sibling_candidates(candidates: list[_SemanticChunkCandidate], *, config: KnowledgeChunkingConfig) -> list[_SemanticChunkCandidate]:
     """Merge adjacent short leaf blocks while retaining every source anchor."""
 
     merged: list[_SemanticChunkCandidate] = []
@@ -760,14 +781,17 @@ def _merge_short_sibling_candidates(candidates: list[_SemanticChunkCandidate]) -
         anchor_counts[candidate.source_anchor] = anchor_counts.get(candidate.source_anchor, 0) + 1
 
     def compatible(left: _SemanticChunkCandidate, right: _SemanticChunkCandidate) -> bool:
-        if anchor_counts[left.source_anchor] > 1 or anchor_counts[right.source_anchor] > 1:
+        if _is_atomic_short_candidate(left) or _is_atomic_short_candidate(right):
             return False
+        repeated_tiny_fragment = left.source_anchor == right.source_anchor and len(left.content) + len(right.content) <= config.minimum_section_chars
+        if anchor_counts[left.source_anchor] > 1 or anchor_counts[right.source_anchor] > 1:
+            return repeated_tiny_fragment
         same_generic_sibling_group = (
             left.chunk_kind == right.chunk_kind == "leaf_evidence" and left.source_anchor != right.source_anchor and left.heading_path[:-1] == right.heading_path[:-1] and left.proposal_sections[:1] == right.proposal_sections[:1]
         )
         if not same_generic_sibling_group:
             return False
-        return len(left.content) + len(right.content) <= _TARGET_CHUNK_CHARS and (len(left.content) < _MIN_CHUNK_CHARS or len(right.content) < _MIN_CHUNK_CHARS)
+        return len(left.content) + len(right.content) <= config.target_chunk_chars and (len(left.content) < config.minimum_chunk_chars or len(right.content) < config.minimum_chunk_chars)
 
     def flush() -> None:
         if not pending:
@@ -809,7 +833,7 @@ def _merge_short_sibling_candidates(candidates: list[_SemanticChunkCandidate]) -
     for candidate in candidates:
         if not pending:
             pending.append(candidate)
-        elif compatible(pending[-1], candidate) and sum(len(item.content) for item in pending) + len(candidate.content) <= _TARGET_CHUNK_CHARS:
+        elif compatible(pending[-1], candidate) and sum(len(item.content) for item in pending) + len(candidate.content) <= config.target_chunk_chars:
             pending.append(candidate)
         else:
             flush()
@@ -819,12 +843,147 @@ def _merge_short_sibling_candidates(candidates: list[_SemanticChunkCandidate]) -
     return [_SemanticChunkCandidate(**{**candidate.__dict__, "chunk_order": index}) for index, candidate in enumerate(merged, start=1)]
 
 
-def _build_semantic_chunk_candidates(content: str, category: str) -> list[_SemanticChunkCandidate]:
+def _candidate_primary_section(candidate: _SemanticChunkCandidate) -> str:
+    return candidate.proposal_sections[0] if candidate.proposal_sections else ""
+
+
+def _heading_path_is_prefix(prefix: tuple[str, ...], value: tuple[str, ...]) -> bool:
+    return bool(prefix) and len(prefix) <= len(value) and value[: len(prefix)] == prefix
+
+
+def _short_candidates_are_compatible(left: _SemanticChunkCandidate, right: _SemanticChunkCandidate) -> bool:
+    if _is_atomic_short_candidate(left) or _is_atomic_short_candidate(right):
+        return False
+    if left.source_anchor == right.source_anchor:
+        return False
+    if _candidate_primary_section(left) == _candidate_primary_section(right):
+        return True
+    if left.chunk_kind == "parent_summary" and _heading_path_is_prefix(left.heading_path, right.heading_path):
+        return True
+    if right.chunk_kind == "parent_summary" and _heading_path_is_prefix(right.heading_path, left.heading_path):
+        return True
+    return left.heading_path[:-1] == right.heading_path[:-1]
+
+
+_ATOMIC_SHORT_HEADING_RE = re.compile(r"(?:国内外研究现状|国内研究现状|国外研究现状|现有问题|研究目标|创新点|考核指标|评价结论|申报条件|预算说明|参考文献)$")
+
+
+def _is_atomic_short_candidate(candidate: _SemanticChunkCandidate) -> bool:
+    return bool(_ATOMIC_SHORT_HEADING_RE.search(candidate.source_anchor.strip()))
+
+
+def _merged_candidate(left: _SemanticChunkCandidate, right: _SemanticChunkCandidate) -> _SemanticChunkCandidate:
+    left_chars = len(left.content)
+    right_chars = len(right.content)
+    if left.chunk_kind == "parent_summary" and _ATOMIC_SHORT_HEADING_RE.search(left.source_anchor.strip()):
+        dominant = left
+    elif right.chunk_kind == "parent_summary" and _ATOMIC_SHORT_HEADING_RE.search(right.source_anchor.strip()):
+        dominant = right
+    elif left.chunk_kind == "parent_summary" and right.chunk_kind != "parent_summary":
+        dominant = right
+    elif right.chunk_kind == "parent_summary" and left.chunk_kind != "parent_summary":
+        dominant = left
+    else:
+        dominant = left if left_chars >= right_chars else right
+
+    anchors: list[str] = []
+    _add_unique(anchors, left.source_anchors or (left.source_anchor,))
+    _add_unique(anchors, right.source_anchors or (right.source_anchor,))
+    proposal_sections: list[str] = list(dominant.proposal_sections)
+    _add_unique(proposal_sections, left.proposal_sections)
+    _add_unique(proposal_sections, right.proposal_sections)
+
+    def merged_values(attribute: str) -> tuple[str, ...]:
+        values: list[str] = []
+        _add_unique(values, getattr(left, attribute))
+        _add_unique(values, getattr(right, attribute))
+        return tuple(values)
+
+    strategies = {left.chunking_strategy, right.chunking_strategy}
+    if "llm_semantic" in strategies:
+        chunking_strategy = "llm_semantic"
+        chunking_model = left.chunking_model or right.chunking_model
+    elif len(strategies) == 1:
+        chunking_strategy = left.chunking_strategy
+        chunking_model = left.chunking_model or right.chunking_model
+    else:
+        chunking_strategy = "rules"
+        chunking_model = None
+
+    return _SemanticChunkCandidate(
+        level=min(left.level, right.level),
+        heading=dominant.heading,
+        content=f"{left.content.strip()}\n\n{right.content.strip()}",
+        proposal_sections=tuple(proposal_sections[:8]),
+        chunk_kind="leaf_evidence" if "leaf_evidence" in {left.chunk_kind, right.chunk_kind} else dominant.chunk_kind,
+        content_role=dominant.content_role if left.content_role == right.content_role or dominant.chunk_kind == "leaf_evidence" else "evidence",
+        heading_path=dominant.heading_path,
+        chunk_order=left.chunk_order,
+        source_anchor=dominant.source_anchor,
+        source_anchors=tuple(anchors),
+        chunking_strategy=chunking_strategy,
+        chunking_model=chunking_model,
+        semantic_keywords=merged_values("semantic_keywords"),
+        semantic_technical_terms=merged_values("semantic_technical_terms"),
+        semantic_methods=merged_values("semantic_methods"),
+        semantic_research_objects=merged_values("semantic_research_objects"),
+        atomic_short=left.atomic_short or right.atomic_short,
+    )
+
+
+def _postprocess_short_candidates(
+    candidates: list[_SemanticChunkCandidate],
+    *,
+    config: KnowledgeChunkingConfig,
+) -> list[_SemanticChunkCandidate]:
+    """Merge undersized adjacent candidates after both rule and model planning."""
+
+    work = list(candidates)
+    index = 0
+    while index < len(work):
+        candidate = work[index]
+        if len(candidate.content) >= config.minimum_chunk_chars:
+            index += 1
+            continue
+        if _is_atomic_short_candidate(candidate):
+            work[index] = _SemanticChunkCandidate(**{**candidate.__dict__, "atomic_short": True})
+            index += 1
+            continue
+
+        choices: list[tuple[int, int]] = []
+        if index + 1 < len(work) and _short_candidates_are_compatible(candidate, work[index + 1]):
+            choices.append((index + 1, len(candidate.content) + len(work[index + 1].content)))
+        if index > 0 and _short_candidates_are_compatible(work[index - 1], candidate):
+            choices.append((index - 1, len(work[index - 1].content) + len(candidate.content)))
+        choices = [choice for choice in choices if choice[1] <= config.maximum_chunk_chars]
+        if not choices:
+            index += 1
+            continue
+
+        neighbor_index, _ = min(choices, key=lambda choice: (choice[1] > config.target_chunk_chars, abs(choice[1] - config.target_chunk_chars)))
+        if neighbor_index < index:
+            work[neighbor_index] = _merged_candidate(work[neighbor_index], candidate)
+            work.pop(index)
+            index = max(0, neighbor_index)
+        else:
+            work[index] = _merged_candidate(candidate, work[neighbor_index])
+            work.pop(neighbor_index)
+
+    return [_SemanticChunkCandidate(**{**candidate.__dict__, "chunk_order": item_index}) for item_index, candidate in enumerate(work, start=1)]
+
+
+def _build_semantic_chunk_candidates(
+    content: str,
+    category: str,
+    *,
+    config: KnowledgeChunkingConfig | None = None,
+) -> list[_SemanticChunkCandidate]:
+    config = config or KnowledgeChunkingConfig()
     candidates: list[_SemanticChunkCandidate] = []
     blocks = _structured_heading_blocks(content)
     if not blocks:
-        return _generic_body_candidates(content, category)
-    if len(blocks) == 1 and blocks[0].level == 1 and not blocks[0].has_children and _body_text_chars(blocks[0].block) < _MIN_CHUNK_CHARS:
+        return _generic_body_candidates(content, category, config=config)
+    if len(blocks) == 1 and blocks[0].level == 1 and not blocks[0].has_children and _body_text_chars(blocks[0].block) < config.minimum_chunk_chars:
         # The searchable document body already covers a tiny title-only file;
         # avoid creating a duplicate chunk that carries no extra granularity.
         return []
@@ -870,7 +1029,7 @@ def _build_semantic_chunk_candidates(content: str, category: str) -> list[_Seman
         if _is_thin_leaf_block(block):
             continue
         content_role = _infer_content_role(block.heading, block.block)
-        for part_heading, part_content in _split_leaf_block(block.heading, block.block):
+        for part_heading, part_content in _split_leaf_block(block.heading, block.block, config=config):
             candidates.append(
                 _SemanticChunkCandidate(
                     level=block.level,
@@ -885,7 +1044,7 @@ def _build_semantic_chunk_candidates(content: str, category: str) -> list[_Seman
                     source_anchors=(block.heading,),
                 )
             )
-    return _merge_short_sibling_candidates(candidates)
+    return _merge_short_sibling_candidates(candidates, config=config)
 
 
 @dataclass(frozen=True)
@@ -998,7 +1157,10 @@ def _model_planning_groups(
         combined_body = "\n\n".join(body for candidate in candidate_group if (body := _candidate_body(candidate.content)))
         units = _semantic_planning_units(combined_body, max_chars=planner.config.unit_max_chars)
         eligible = (
-            first.chunk_kind == "leaf_evidence" and all(len(candidate.source_anchors or (candidate.source_anchor,)) == 1 for candidate in candidate_group) and len(combined_body) >= planner.config.minimum_section_chars and len(units) >= 2
+            first.chunk_kind == "leaf_evidence"
+            and all(len(candidate.source_anchors or (candidate.source_anchor,)) == 1 for candidate in candidate_group)
+            and len(combined_body) >= max(planner.config.minimum_section_chars, planner.config.minimum_chunk_chars)
+            and len(units) >= 2
         )
         if not eligible:
             groups.append(_ModelPlanningGroup(candidates=tuple(candidate_group)))
@@ -1226,7 +1388,19 @@ def _proposal_sections_for(heading: str, content: str) -> list[str]:
     sections: list[str] = []
     seen: set[str] = set()
     for key, label, keywords in _PROPOSAL_SECTION_RULES:
-        if any(keyword in text for keyword in keywords):
+        if key == "references":
+            heading_match = any(keyword in heading for keyword in keywords)
+            strong_body_match = bool(
+                re.search(
+                    r"参考文献|(?:国家|行业|地方|团体)标准|(?:GB|GB/T|JGJ|JTG|SL|ISO|IEC)\s*[-/A-Z0-9]",
+                    content,
+                    flags=re.IGNORECASE,
+                )
+            )
+            matched = heading_match or strong_body_match
+        else:
+            matched = any(keyword in text for keyword in keywords)
+        if matched:
             for value in (key, label):
                 if value not in seen:
                     seen.add(value)
@@ -1361,13 +1535,14 @@ def _write_section_chunk(
     source_anchor: str | None = None,
     source_anchors: tuple[str, ...] = (),
     chunk_kind: str = "leaf_evidence",
+    atomic_short: bool = False,
     content_role: str = "evidence",
     chunking_strategy: str = "rules",
     chunking_model: str | None = None,
     heading_path: tuple[str, ...] = (),
     chunk_order: int = 0,
     relations: _ChunkRelations | None = None,
-) -> str:
+) -> tuple[str, int]:
     label = _canonical_proposal_label(proposal_sections, category)
     project_folder = _safe_filename_part(title, max_chars=120)
     filename = _section_topic_filename(heading)
@@ -1379,6 +1554,7 @@ def _write_section_chunk(
     chunk_path.parent.mkdir(parents=True, exist_ok=True)
     anchor = source_anchor or heading
     anchors = source_anchors or (anchor,)
+    semantic_char_count = len(content)
     content = rewrite_markdown_asset_links(content, source_file_path=source_relative_path, root=root)
     chunk_id = relations.chunk_id if relations else _stable_chunk_identifier("chk", source_relative_path, anchor, chunk_kind, chunk_order)
     chunk_path = _deduplicated_chunk_path(chunk_path, source_relative_path, chunk_id)
@@ -1395,6 +1571,7 @@ def _write_section_chunk(
         f"chunking_strategy: {chunking_strategy}",
         f"chunking_model: {chunking_model or ''}",
         f"chunk_kind: {chunk_kind}",
+        f"atomic_short: {'true' if atomic_short else 'false'}",
         f"chunk_order: {chunk_order}",
         f"chunk_id: {chunk_id}",
         f"chunk_group_id: {relations.chunk_group_id if relations else ''}",
@@ -1406,6 +1583,8 @@ def _write_section_chunk(
         f"document_previous_chunk_id: {relations.document_previous_chunk_id or '' if relations else ''}",
         f"document_next_chunk_id: {relations.document_next_chunk_id or '' if relations else ''}",
         f"char_count: {len(content)}",
+        f"semantic_char_count: {semantic_char_count}",
+        f"stored_body_chars: {len(content)}",
         f"heading_path: [{', '.join(heading_path or (heading,))}]",
         f"domain: {domain or ''}",
         f"category: {category}",
@@ -1417,7 +1596,7 @@ def _write_section_chunk(
         "",
     ]
     chunk_path.write_text("\n".join(front_matter) + content.strip() + "\n", encoding="utf-8")
-    return chunk_path.relative_to(root).as_posix()
+    return chunk_path.relative_to(root).as_posix(), len(content)
 
 
 def _cleanup_generated_chunks_for_source(root: Path, source_relative_path: str) -> int:
@@ -1736,13 +1915,14 @@ def build_knowledge_index_from_folder(
         technical_terms = _collect_patterns(content, _TECHNICAL_TERM_PATTERNS)
         methods = _collect_patterns(content, _METHOD_PATTERNS)
         research_objects = _collect_patterns(content, _RESEARCH_OBJECT_PATTERNS)
-        rule_chunk_candidates = _build_semantic_chunk_candidates(content, category)
+        rule_chunk_candidates = _build_semantic_chunk_candidates(content, category, config=chunk_planner.config)
         chunk_candidates, chunking_warnings = _refine_candidates_with_model(
             rule_chunk_candidates,
             planner=chunk_planner,
             source_title=title,
             source_category=category,
         )
+        chunk_candidates = _postprocess_short_candidates(chunk_candidates, config=chunk_planner.config)
         warnings.extend(f"{relative_path}: {warning}" for warning in chunking_warnings)
         llm_chunked = any(candidate.chunking_strategy == "llm_semantic" for candidate in chunk_candidates)
 
@@ -1796,7 +1976,7 @@ def build_knowledge_index_from_folder(
             block_technical_terms = list(candidate.semantic_technical_terms) or _collect_patterns(candidate.content, _TECHNICAL_TERM_PATTERNS)
             block_methods = list(candidate.semantic_methods) or _collect_patterns(candidate.content, _METHOD_PATTERNS)
             block_research_objects = list(candidate.semantic_research_objects) or _collect_patterns(candidate.content, _RESEARCH_OBJECT_PATTERNS)
-            chunk_file_path = _write_section_chunk(
+            chunk_file_path, stored_body_chars = _write_section_chunk(
                 root=root,
                 source_relative_path=relative_path,
                 title=title,
@@ -1812,6 +1992,7 @@ def build_knowledge_index_from_folder(
                 source_anchor=candidate.source_anchor,
                 source_anchors=candidate.source_anchors,
                 chunk_kind=candidate.chunk_kind,
+                atomic_short=candidate.atomic_short,
                 content_role=candidate.content_role,
                 chunking_strategy=candidate.chunking_strategy,
                 chunking_model=candidate.chunking_model,
@@ -1848,6 +2029,7 @@ def build_knowledge_index_from_folder(
                     "source_file_path": relative_path,
                     **fingerprint,
                     "chunk_kind": candidate.chunk_kind,
+                    "atomic_short": candidate.atomic_short,
                     "content_role": candidate.content_role,
                     "chunking_strategy": candidate.chunking_strategy,
                     "chunking_model": candidate.chunking_model,
@@ -1865,6 +2047,8 @@ def build_knowledge_index_from_folder(
                     "document_previous_chunk_id": relations.document_previous_chunk_id,
                     "document_next_chunk_id": relations.document_next_chunk_id,
                     "char_count": len(candidate.content),
+                    "semantic_char_count": len(candidate.content),
+                    "stored_body_chars": stored_body_chars,
                 },
                 confidence=0.82,
             )

@@ -772,7 +772,12 @@ its fully indexed document body to avoid a duplicate chunk.
 
 - Generated chunks store all contributing `source_anchors`. Adjacent short
   siblings with the same structural/business context may be merged, including
-  recognized business sections. Oversized logical sections share a stable
+  recognized business sections. A final postprocessing pass must also merge
+  compatible undersized parent summaries and leaf chunks before publishing.
+  Semantically indivisible short sections may opt out only through the explicit
+  `atomic_short` marker; do not create a general small-chunk escape hatch.
+  `semantic_char_count` records the reconstructed semantic body separately from
+  the stored body size after link rewriting. Oversized logical sections share a stable
   `chunk_group_id` and carry `chunk_id`, `chunk_sequence`, `chunk_count`,
   previous/next IDs, and related IDs in both front matter and index metadata.
   Every chunk also carries document-order previous/next IDs. Repeated headings
@@ -783,13 +788,20 @@ its fully indexed document body to avoid a duplicate chunk.
   as a constrained knowledge-construction subagent. It receives numbered
   original-text units and may return only contiguous ranges plus allow-listed
   classification metadata; generator code reconstructs every chunk from the
-  original units and verifies complete ordered coverage, length, enum values,
-  and extractive metadata. Never hardcode Qwen or choose a default model. A
+  original units and verifies complete ordered coverage, configured minimum and
+  maximum length, enum values, and extractive metadata. Never hardcode Qwen or choose a default model. A
   missing/invalid selection, provider error, timeout, malformed JSON, or invalid
-  range must preserve the current deterministic candidates. Invocation/parse
-  failures trip a per-build circuit breaker so later sections fall back without
-  repeating a failing remote call. Build stats expose model, calls, planned and
-  fallback sections, failures, and LLM-chunked chunk count.
+  range must preserve the current deterministic candidates. Each failed batch
+  is retried up to `max_call_attempts`; only `circuit_breaker_failures`
+  consecutive failed batches trip the per-build circuit breaker, so one transient
+  failure cannot disable semantic planning for the rest of the build. Build stats expose model, calls, planned and
+  fallback sections, failures, circuit-open state, and LLM-chunked chunk count.
+- Incoming organization uses a scored classifier: filename/path identity has
+  more weight than headings, and headings have more weight than preview body.
+  Specific keywords beat generic tokens, and a minimum score is required before
+  choosing a category/domain. Keep proposal-section classification separate
+  from physical source category; weak body occurrences of “standard” must not
+  turn a technical method section into reference material.
 - `knowledge_search_index` exposes the group context. Supplying a returned
   `chunk_group_id` retrieves the complete group ordered by sequence.
 - `deerflow.knowledge.content_store` is the single path-validation boundary for
@@ -830,7 +842,9 @@ its fully indexed document body to avoid a duplicate chunk.
   `quality_report`. Checks are format-neutral and cover indexed-body coverage,
   empty/short/oversized leaf chunks, exact duplicates, duplicate chunk paths,
   canonical asset targets, chunk-group sequence integrity, and document-order
-  neighbor integrity. A failed threshold currently
+  neighbor integrity. By default, non-atomic leaf chunks below 500 characters
+  are short, below 120 characters are critical in multi-chunk documents, and a
+  short-chunk ratio over 5% is reported. A failed threshold currently
   produces `completed_with_warnings`; it is an advisory publish gate until index
   generation is moved behind a staged atomic swap.
 

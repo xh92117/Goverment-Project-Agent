@@ -182,7 +182,13 @@ def _bounded_strings(values: Sequence[str], *, limit: int) -> tuple[str, ...]:
     return tuple(result)
 
 
-def _validate_plan(section: KnowledgeChunkingSection, payload: _SectionPayload, *, maximum_chunk_chars: int) -> tuple[KnowledgeChunkRange, ...]:
+def _validate_plan(
+    section: KnowledgeChunkingSection,
+    payload: _SectionPayload,
+    *,
+    minimum_chunk_chars: int,
+    maximum_chunk_chars: int,
+) -> tuple[KnowledgeChunkRange, ...]:
     expected_start = 1
     ranges: list[KnowledgeChunkRange] = []
     unit_count = len(section.units)
@@ -193,6 +199,8 @@ def _validate_plan(section: KnowledgeChunkingSection, payload: _SectionPayload, 
             raise ValueError(f"section {section.section_id} 的单元范围越界。")
         selected_units = section.units[chunk.start_unit - 1 : chunk.end_unit]
         chunk_chars = sum(len(unit.text) for unit in selected_units) + max(0, len(selected_units) - 1) * 2
+        if chunk_chars < minimum_chunk_chars:
+            raise ValueError(f"section {section.section_id} 的模型分块长度 {chunk_chars} 低于 {minimum_chunk_chars}。")
         if chunk_chars > maximum_chunk_chars:
             raise ValueError(f"section {section.section_id} 的模型分块长度 {chunk_chars} 超过 {maximum_chunk_chars}。")
         if chunk.primary_section not in _PRIMARY_SECTIONS:
@@ -253,6 +261,7 @@ class KnowledgeSemanticChunkPlanner:
         self.planned_sections = 0
         self.fallback_sections = 0
         self.failed_calls = 0
+        self._consecutive_failed_batches = 0
         self._unavailable_reason: str | None = None
 
     @property
@@ -272,6 +281,7 @@ class KnowledgeSemanticChunkPlanner:
             "llm_chunking_planned_sections": self.planned_sections,
             "llm_chunking_fallback_sections": self.fallback_sections,
             "llm_chunking_failed_calls": self.failed_calls,
+            "llm_chunking_circuit_open": self._unavailable_reason is not None,
         }
 
     def _resolve_model_name(self) -> str:
@@ -352,9 +362,7 @@ class KnowledgeSemanticChunkPlanner:
         if self._unavailable_reason:
             self.fallback_sections += len(sections)
             result.fallback_sections = len(sections)
-            result.warnings.append(
-                f"大模型分块在本次构建中已不可用，已回退规则分块：{self._unavailable_reason}"
-            )
+            result.warnings.append(f"大模型分块在本次构建中已不可用，已回退规则分块：{self._unavailable_reason}")
             return result
         try:
             model = self._get_model()
@@ -368,27 +376,41 @@ class KnowledgeSemanticChunkPlanner:
         result.model_name = self.model_name
         batches = self._batches(sections)
         for batch_index, batch in enumerate(batches):
-            self.calls += 1
-            result.calls += 1
-            try:
-                response = model.invoke(
-                    [
-                        SystemMessage(content=_SYSTEM_PROMPT),
-                        HumanMessage(content=self._prompt(batch)),
-                    ]
-                )
-                payload = _parse_response(response.content)
-                payload_by_id = {plan.section_id: plan for plan in payload.plans}
-            except Exception as exc:
-                self._unavailable_reason = str(exc)
-                self.failed_calls += 1
-                remaining_sections = sum(len(item) for item in batches[batch_index:])
-                self.fallback_sections += remaining_sections
-                result.fallback_sections += remaining_sections
-                result.warnings.append(
-                    f"大模型分块调用或解析失败，本次构建后续章节全部回退规则分块（共 {remaining_sections} 个）：{exc}"
-                )
-                break
+            payload_by_id: dict[str, _SectionPayload] | None = None
+            last_error: Exception | None = None
+            for _ in range(self.config.max_call_attempts):
+                self.calls += 1
+                result.calls += 1
+                try:
+                    response = model.invoke(
+                        [
+                            SystemMessage(content=_SYSTEM_PROMPT),
+                            HumanMessage(content=self._prompt(batch)),
+                        ]
+                    )
+                    payload = _parse_response(response.content)
+                    payload_by_id = {plan.section_id: plan for plan in payload.plans}
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    self.failed_calls += 1
+
+            if payload_by_id is None:
+                self._consecutive_failed_batches += 1
+                self.fallback_sections += len(batch)
+                result.fallback_sections += len(batch)
+                result.warnings.append(f"大模型分块调用或解析失败，当前批次 {len(batch)} 个章节已回退规则分块（尝试 {self.config.max_call_attempts} 次）：{last_error}")
+                if self._consecutive_failed_batches >= self.config.circuit_breaker_failures:
+                    self._unavailable_reason = str(last_error or "连续调用失败")
+                    remaining_sections = sum(len(item) for item in batches[batch_index + 1 :])
+                    if remaining_sections:
+                        self.fallback_sections += remaining_sections
+                        result.fallback_sections += remaining_sections
+                        result.warnings.append(f"大模型分块连续失败 {self._consecutive_failed_batches} 个批次，熔断后续 {remaining_sections} 个章节并回退规则分块。")
+                    break
+                continue
+
+            self._consecutive_failed_batches = 0
 
             for section in batch:
                 section_payload = payload_by_id.get(section.section_id)
@@ -398,7 +420,12 @@ class KnowledgeSemanticChunkPlanner:
                     result.warnings.append(f"大模型未返回 section {section.section_id}，已回退规则分块。")
                     continue
                 try:
-                    ranges = _validate_plan(section, section_payload, maximum_chunk_chars=self.config.maximum_chunk_chars)
+                    ranges = _validate_plan(
+                        section,
+                        section_payload,
+                        minimum_chunk_chars=self.config.minimum_chunk_chars,
+                        maximum_chunk_chars=self.config.maximum_chunk_chars,
+                    )
                 except ValueError as exc:
                     self.fallback_sections += 1
                     result.fallback_sections += 1

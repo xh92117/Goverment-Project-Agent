@@ -776,6 +776,22 @@ def test_organize_incoming_files_classifies_tunnel_detection_research_plan(tmp_p
     assert report.files[0].target_path == "历史申报书/隧洞检测/引水隧洞衬砌爬壁检测机器人检测系统研究方案.md"
 
 
+def test_organizer_uses_title_and_specificity_instead_of_weak_body_keywords(tmp_path: Path) -> None:
+    root = tmp_path / "knowledge_base"
+    source = root / "_incoming" / "冲击弹性波检测技术基本原理.md"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "# 冲击弹性波检测技术基本原理\n\n本文介绍检测原理。MEM 标准模式用于示例，成果仅表示计算结果。",
+        encoding="utf-8",
+    )
+
+    report = organize_incoming_files(KnowledgeOrganizeOptions(), user_id="alice")
+
+    assert report.files[0].category == "技术资料"
+    assert report.files[0].domain == "无损检测"
+    assert report.files[0].target_path == "技术资料/无损检测/冲击弹性波检测技术基本原理.md"
+
+
 def test_organize_incoming_files_moves_pdf_mineru_cache_with_source(tmp_path: Path) -> None:
     root = tmp_path / "knowledge_base"
     source = root / "_incoming" / "引水隧洞衬砌爬壁检测机器人检测系统研究方案.pdf"
@@ -1071,6 +1087,32 @@ def test_semantic_chunk_candidates_use_parent_summary_and_leaf_evidence() -> Non
     assert all(candidate.content_role in {"method_design", "problem"} for candidate in split_leaf)
     assert all(len(candidate.content) <= 3400 for candidate in split_leaf)
     assert all(candidate.proposal_sections[0] in {"technical_solution", "research_content"} for candidate in split_leaf)
+
+
+def test_short_parent_summary_is_merged_with_child_before_publishing() -> None:
+    from deerflow.config.knowledge_retrieval_config import KnowledgeChunkingConfig
+
+    content = "## 降噪\n\n小波降噪包括信号分解和阈值处理。\n\n### 软件降噪方法\n\n" + ("采用小波分解、阈值处理和信号重构完成软件降噪。" * 18)
+    config = KnowledgeChunkingConfig()
+    candidates = knowledge_generator._build_semantic_chunk_candidates(content, "技术资料", config=config)
+
+    processed = knowledge_generator._postprocess_short_candidates(candidates, config=config)
+
+    assert len(processed) == 1
+    assert processed[0].chunk_kind == "leaf_evidence"
+    assert "小波降噪包括信号分解" in processed[0].content
+    assert "信号重构完成软件降噪" in processed[0].content
+
+
+def test_weak_standard_word_does_not_classify_method_as_references() -> None:
+    heading = "3.1.4 传感器的固定方法"
+    content = "采用螺栓、磁性卡座和探针固定传感器，测试结果使用 MEM 标准模式显示。"
+
+    detected = knowledge_generator._proposal_sections_for(heading, content)
+    primary = knowledge_generator._primary_section_key_for(heading, content, detected, [])
+
+    assert "references" not in detected
+    assert primary == "technical_solution"
 
 
 def test_semantic_chunk_candidates_filter_report_front_matter() -> None:

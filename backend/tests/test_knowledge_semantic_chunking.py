@@ -132,6 +132,38 @@ def test_semantic_chunk_planner_rejects_incomplete_model_plan_and_falls_back() -
     assert any("不连续" in warning or "未完整覆盖" in warning for warning in result.warnings)
 
 
+def test_semantic_chunk_planner_rejects_chunks_below_configured_minimum() -> None:
+    chunking = KnowledgeChunkingConfig(
+        enabled=True,
+        minimum_section_chars=1,
+        minimum_chunk_chars=30,
+        target_chunk_chars=50,
+        maximum_chunk_chars=200,
+        unit_max_chars=80,
+        max_prompt_chars=4_000,
+    )
+    model = _StubModel(
+        {
+            "plans": [
+                {
+                    "section_id": "section-1",
+                    "chunks": [
+                        {"start_unit": 1, "end_unit": 1},
+                        {"start_unit": 2, "end_unit": 3},
+                    ],
+                }
+            ]
+        }
+    )
+    planner = KnowledgeSemanticChunkPlanner(app_config=_app_config(chunking), model_factory=lambda **_: model)
+
+    result = planner.plan([_section()])
+
+    assert result.plans == {}
+    assert result.fallback_sections == 1
+    assert any("低于 30" in warning for warning in result.warnings)
+
+
 def test_disabled_semantic_chunk_planner_never_creates_model() -> None:
     chunking = KnowledgeChunkingConfig(enabled=False)
 
@@ -167,6 +199,128 @@ def test_unavailable_semantic_chunk_model_falls_back_without_raising() -> None:
     assert result.fallback_sections == 1
     assert result.calls == 0
     assert any("回退规则分块" in warning and "provider timeout" in warning for warning in result.warnings)
+
+
+def test_semantic_chunk_planner_retries_a_transient_model_failure() -> None:
+    chunking = KnowledgeChunkingConfig(
+        enabled=True,
+        minimum_section_chars=1,
+        minimum_chunk_chars=1,
+        target_chunk_chars=80,
+        maximum_chunk_chars=200,
+        unit_max_chars=80,
+        max_prompt_chars=4_000,
+        max_call_attempts=2,
+        circuit_breaker_failures=3,
+    )
+
+    class TransientModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, _messages: object) -> AIMessage:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("temporary timeout")
+            return AIMessage(
+                content=json.dumps(
+                    {
+                        "plans": [
+                            {
+                                "section_id": "section-1",
+                                "chunks": [{"start_unit": 1, "end_unit": 3}],
+                            }
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+    model = TransientModel()
+    planner = KnowledgeSemanticChunkPlanner(app_config=_app_config(chunking), model_factory=lambda **_: model)
+
+    result = planner.plan([_section()])
+
+    assert "section-1" in result.plans
+    assert result.calls == 2
+    assert planner.failed_calls == 1
+    assert result.fallback_sections == 0
+
+
+def test_failed_batch_does_not_disable_later_semantic_planning() -> None:
+    chunking = KnowledgeChunkingConfig(
+        enabled=True,
+        minimum_section_chars=1,
+        minimum_chunk_chars=1,
+        target_chunk_chars=80,
+        maximum_chunk_chars=200,
+        unit_max_chars=80,
+        max_prompt_chars=4_000,
+        max_sections_per_call=1,
+        max_call_attempts=1,
+        circuit_breaker_failures=2,
+    )
+    second = KnowledgeChunkingSection(
+        section_id="section-2",
+        heading="技术路线",
+        heading_path=("研究内容", "技术路线"),
+        units=_section().units,
+    )
+
+    class RecoveringModel:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, _messages: object) -> AIMessage:
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("first batch timeout")
+            return AIMessage(content=json.dumps({"plans": [{"section_id": "section-2", "chunks": [{"start_unit": 1, "end_unit": 3}]}]}))
+
+    planner = KnowledgeSemanticChunkPlanner(app_config=_app_config(chunking), model_factory=lambda **_: RecoveringModel())
+    result = planner.plan([_section(), second])
+
+    assert set(result.plans) == {"section-2"}
+    assert result.calls == 2
+    assert result.fallback_sections == 1
+    assert planner.stats()["llm_chunking_circuit_open"] is False
+
+
+def test_consecutive_failed_batches_open_circuit_breaker() -> None:
+    chunking = KnowledgeChunkingConfig(
+        enabled=True,
+        minimum_section_chars=1,
+        minimum_chunk_chars=1,
+        target_chunk_chars=80,
+        maximum_chunk_chars=200,
+        unit_max_chars=80,
+        max_prompt_chars=4_000,
+        max_sections_per_call=1,
+        max_call_attempts=1,
+        circuit_breaker_failures=2,
+    )
+    sections = [
+        KnowledgeChunkingSection(
+            section_id=f"section-{index}",
+            heading=f"章节 {index}",
+            heading_path=(f"章节 {index}",),
+            units=_section().units,
+        )
+        for index in range(1, 4)
+    ]
+
+    class FailingModel:
+        def invoke(self, _messages: object) -> AIMessage:
+            raise RuntimeError("provider unavailable")
+
+    planner = KnowledgeSemanticChunkPlanner(app_config=_app_config(chunking), model_factory=lambda **_: FailingModel())
+    result = planner.plan(sections)
+
+    assert result.plans == {}
+    assert result.calls == 2
+    assert result.fallback_sections == 3
+    assert planner.stats()["llm_chunking_circuit_open"] is True
+    assert any("熔断后续 1 个章节" in warning for warning in result.warnings)
 
 
 def test_semantic_chunk_planner_does_not_use_legacy_image_model_as_build_selection() -> None:

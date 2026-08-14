@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -34,6 +35,7 @@ _DEFAULT_CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ),
     ("国内外研究现状", ("国内外研究现状", "研究现状", "国外研究", "国内研究")),
     ("已有研究基础", ("已有研究基础", "研究基础", "前期基础", "技术基础", "实验基础")),
+    ("技术资料", ("基本原理", "技术手册", "用户手册", "操作手册", "培训资料", "理论基础", "试验方法", "检测方法")),
     ("团队成果", ("团队成果", "论文", "专利", "软著", "标准", "奖励", "成果")),
     ("政策指南", ("指南", "申报通知", "通知", "管理办法", "评审规则", "资助办法")),
     ("技术路线", ("技术路线", "实施方案")),
@@ -41,6 +43,7 @@ _DEFAULT_CATEGORY_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("预算依据", ("预算", "经费", "预算科目")),
 )
 _DEFAULT_DOMAIN_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("无损检测", ("无损检测", "冲击弹性波", "弹性波CT", "超声检测")),
     (
         "隧洞检测",
         ("隧洞", "衬砌", "爬壁机器人", "冲击回波", "地质雷达", "弹性波", "多源检测"),
@@ -49,6 +52,8 @@ _DEFAULT_DOMAIN_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("智能制造", ("智能制造", "工业视觉", "机器视觉", "缺陷检测")),
     ("人工智能", ("人工智能", "大模型", "深度学习", "机器学习")),
 )
+_WEAK_CLASSIFICATION_KEYWORDS = {"标准", "成果", "指南", "通知", "创新", "预算", "经费", "弹性波", "检测"}
+_MIN_CLASSIFICATION_SCORE = 4.0
 
 KnowledgeOrganizeProgressCallback = Callable[[int, int, float, str], None]
 
@@ -198,11 +203,57 @@ def _file_preview(path: Path, max_chars: int) -> str:
         return ""
 
 
-def _match_rule(text: str, rules: tuple[KnowledgeOrganizeRule, ...], default: str | None) -> str | None:
-    for rule in rules:
-        if any(keyword and keyword in text for keyword in rule.keywords):
-            return rule.name
-    return default
+def _preview_headings(preview: str) -> str:
+    headings = []
+    for line in preview.splitlines():
+        match = re.match(r"^\s*#{1,6}\s+(.+?)\s*$", line)
+        if match:
+            headings.append(match.group(1))
+    return "\n".join(headings)
+
+
+def _rule_score(*, identity_text: str, heading_text: str, preview: str, keywords: tuple[str, ...]) -> float:
+    score = 0.0
+    identity_value = identity_text.casefold()
+    heading_value = heading_text.casefold()
+    preview_value = preview.casefold()
+    for keyword in keywords:
+        if not keyword:
+            continue
+        keyword_value = keyword.casefold()
+        specificity = min(len(keyword), 8) / 4
+        if keyword_value in identity_value:
+            score += 10.0 + specificity
+        if keyword_value in heading_value:
+            score += 5.0 + specificity
+        if keyword_value in preview_value:
+            score += 0.5 if keyword in _WEAK_CLASSIFICATION_KEYWORDS else 1.5 + specificity / 2
+    return score
+
+
+def _match_rule(
+    *,
+    identity_text: str,
+    preview: str,
+    rules: tuple[KnowledgeOrganizeRule, ...],
+    default: str | None,
+) -> str | None:
+    heading_text = _preview_headings(preview)
+    scored = [
+        (
+            _rule_score(
+                identity_text=identity_text,
+                heading_text=heading_text,
+                preview=preview,
+                keywords=rule.keywords,
+            ),
+            index,
+            rule.name,
+        )
+        for index, rule in enumerate(rules)
+    ]
+    best_score, _, best_name = max(scored, default=(0.0, 0, default), key=lambda item: (item[0], -item[1]))
+    return best_name if best_score >= _MIN_CLASSIFICATION_SCORE else default
 
 
 def _deduplicated_target(path: Path) -> Path:
@@ -330,13 +381,13 @@ def organize_incoming_files(
             continue
 
         preview = _file_preview(source, options.preview_chars)
-        classification_text = f"{source.stem}\n{source_rel}\n{preview}"
+        identity_text = f"{source.stem}\n{source_rel}"
         category = _safe_folder_name(
-            _match_rule(classification_text, options.category_rules, options.default_category),
+            _match_rule(identity_text=identity_text, preview=preview, rules=options.category_rules, default=options.default_category),
             "未分类",
         )
         domain = _safe_folder_name(
-            _match_rule(classification_text, options.domain_rules, options.default_domain),
+            _match_rule(identity_text=identity_text, preview=preview, rules=options.domain_rules, default=options.default_domain),
             "通用",
         )
         target_dir = (root / category / domain).resolve()

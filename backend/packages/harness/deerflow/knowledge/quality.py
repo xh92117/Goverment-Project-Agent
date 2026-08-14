@@ -69,9 +69,14 @@ def evaluate_knowledge_build_quality(
     empty_documents = 0
     empty_chunks = 0
     short_chunks = 0
+    critical_short_chunks = 0
+    short_parent_summaries = 0
     oversized_chunks = 0
     broken_assets = 0
     duplicate_chunk_file_paths = 0
+    source_chunk_counts: dict[str, int] = defaultdict(int)
+    for entry in chunk_entries:
+        source_chunk_counts[entry.source_file_path or entry.file_path] += 1
 
     chunk_paths: dict[str, list[KnowledgeIndexEntry]] = defaultdict(list)
     for entry in chunk_entries:
@@ -107,12 +112,31 @@ def evaluate_knowledge_build_quality(
         if entry.entry_type in {"section", "subsection"}:
             duplicate_bodies[hashlib.sha256(normalized.encode("utf-8")).hexdigest()].append(entry)
             chunk_kind = str(entry.metadata.get("chunk_kind") or "")
-            if chunk_kind == "leaf_evidence" and len(normalized) < config.minimum_leaf_chunk_chars:
+            atomic_short = bool(entry.metadata.get("atomic_short"))
+            if chunk_kind == "leaf_evidence" and not atomic_short and len(normalized) < config.minimum_leaf_chunk_chars:
                 short_chunks += 1
+                if len(normalized) < config.critical_leaf_chunk_chars:
+                    critical_short_chunks += 1
+                    severity = "error" if source_chunk_counts[entry.source_file_path or entry.file_path] > 1 else "warning"
+                    add_issue(
+                        "critical_short_leaf_chunk",
+                        severity,
+                        f"叶子分块正文仅 {len(normalized)} 字，低于 {config.critical_leaf_chunk_chars} 字硬门槛。",
+                        entry=entry,
+                    )
+                else:
+                    add_issue(
+                        "short_leaf_chunk",
+                        "warning",
+                        f"叶子分块正文仅 {len(normalized)} 字，低于 {config.minimum_leaf_chunk_chars} 字目标。",
+                        entry=entry,
+                    )
+            if chunk_kind == "parent_summary" and not atomic_short and len(normalized) < config.minimum_leaf_chunk_chars:
+                short_parent_summaries += 1
                 add_issue(
-                    "short_leaf_chunk",
+                    "short_parent_summary",
                     "warning",
-                    f"叶子分块正文仅 {len(normalized)} 字，可能缺少独立检索价值。",
+                    f"父级摘要仅 {len(normalized)} 字，应与相邻子块合并。",
                     entry=entry,
                 )
             if len(normalized) > config.maximum_chunk_chars:
@@ -226,6 +250,14 @@ def evaluate_knowledge_build_quality(
             f"可检索正文覆盖率为 {body_coverage:.1%}，低于 {config.minimum_body_coverage:.1%} 门槛。",
         )
 
+    short_chunk_ratio = short_chunks / len(chunk_entries) if chunk_entries else 0.0
+    if short_chunk_ratio > config.maximum_short_chunk_ratio:
+        add_issue(
+            "short_chunk_ratio_exceeded",
+            "warning",
+            f"短叶子块占比为 {short_chunk_ratio:.1%}，超过 {config.maximum_short_chunk_ratio:.1%} 目标。",
+        )
+
     score = max(0.0, 100.0 - error_count * 10.0 - warning_count * 2.0)
     return KnowledgeBuildQualityReport(
         enabled=True,
@@ -241,6 +273,9 @@ def evaluate_knowledge_build_quality(
             "empty_documents": empty_documents,
             "empty_chunks": empty_chunks,
             "short_chunks": short_chunks,
+            "critical_short_chunks": critical_short_chunks,
+            "short_parent_summaries": short_parent_summaries,
+            "short_chunk_ratio": round(short_chunk_ratio, 4),
             "oversized_chunks": oversized_chunks,
             "duplicate_chunk_bodies": duplicate_chunk_bodies,
             "llm_chunked_chunks": llm_chunked_chunks,

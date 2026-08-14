@@ -18,6 +18,8 @@ class KnowledgeChunkingConfig(BaseModel):
     unit_max_chars: int = Field(default=600, ge=50, le=10_000)
     max_prompt_chars: int = Field(default=24_000, ge=4_000, le=200_000)
     max_sections_per_call: int = Field(default=8, ge=1, le=50)
+    max_call_attempts: int = Field(default=2, ge=1, le=5)
+    circuit_breaker_failures: int = Field(default=3, ge=1, le=20)
 
     @model_validator(mode="after")
     def validate_thresholds(self) -> Self:
@@ -51,9 +53,17 @@ class KnowledgeQualityConfig(BaseModel):
 
     enabled: bool = True
     minimum_body_coverage: float = Field(default=0.98, ge=0.0, le=1.0)
-    minimum_leaf_chunk_chars: int = Field(default=80, ge=1, le=10_000)
+    critical_leaf_chunk_chars: int = Field(default=120, ge=1, le=10_000)
+    minimum_leaf_chunk_chars: int = Field(default=500, ge=1, le=10_000)
+    maximum_short_chunk_ratio: float = Field(default=0.05, ge=0.0, le=1.0)
     maximum_chunk_chars: int = Field(default=3_600, ge=100, le=100_000)
     max_reported_issues: int = Field(default=200, ge=1, le=2_000)
+
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> Self:
+        if self.critical_leaf_chunk_chars > self.minimum_leaf_chunk_chars:
+            raise ValueError("critical_leaf_chunk_chars must not exceed minimum_leaf_chunk_chars")
+        return self
 
 
 class KnowledgeRetrievalConfig(BaseModel):
