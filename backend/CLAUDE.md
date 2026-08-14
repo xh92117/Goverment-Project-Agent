@@ -286,6 +286,12 @@ Configuration priority:
 5. `config.yaml` in parent directory (project root - **recommended location**)
 
 Config values starting with `$` are resolved as environment variables (e.g., `$OPENAI_API_KEY`).
+Production Compose uses the stable `agent-base` project name. Its Gateway
+`config.yaml` bind mount must remain read-write because admin model, knowledge-
+model, and PDF-parser settings persist to that file; deployment startup must
+reject a host config file that the deployment user cannot write. Other static
+mounts remain read-only. `_write_raw_config()` converts read-only/permission
+failures to an actionable HTTP 503 instead of leaking an unhandled ASGI 500.
 `ModelConfig` also declares `use_responses_api` and `output_version` so OpenAI `/v1/responses` can be enabled explicitly while still using `langchain_openai:ChatOpenAI`.
 `ModelConfig.provider` is settings/management metadata. The model factory must
 exclude it from constructor and request kwargs; provider routing is determined

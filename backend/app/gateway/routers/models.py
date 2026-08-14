@@ -1,4 +1,5 @@
 import asyncio
+import errno
 import json
 import os
 import re
@@ -264,8 +265,19 @@ def _load_raw_config(config_path: Path) -> dict[str, Any]:
 
 
 def _write_raw_config(config_path: Path, data: dict[str, Any]) -> None:
-    with open(config_path, "w", encoding="utf-8") as f:
-        yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+    try:
+        with open(config_path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, sort_keys=False, allow_unicode=True)
+    except OSError as exc:
+        if isinstance(exc, PermissionError) or exc.errno in {errno.EROFS, errno.EACCES, errno.EPERM}:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "config.yaml is not writable. Mount the Gateway config file read-write "
+                    "and grant the deployment user write permission."
+                ),
+            ) from exc
+        raise
 
 
 def _raw_models(data: dict[str, Any]) -> list[dict[str, Any]]:

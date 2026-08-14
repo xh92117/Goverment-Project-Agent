@@ -43,6 +43,16 @@ def test_service_launchers_always_use_gateway_runtime():
         assert "LANGGRAPH_REWRITE" not in content, path
 
 
+def test_production_compose_keeps_project_identity_and_config_writable():
+    for path in ("docker/docker-compose.yaml", "docker/docker-compose.server.yaml"):
+        content = _read(path)
+        gateway_section = content.split("container_name: agent-base-gateway", 1)[1].split("working_dir:", 1)[0]
+
+        assert re.search(r"(?m)^name:\s+agent-base\s*$", content), path
+        assert ":/app/backend/config.yaml" in gateway_section, path
+        assert ":/app/backend/config.yaml:ro" not in gateway_section, path
+
+
 def test_local_dev_gateway_reload_excludes_runtime_state_with_absolute_dirs():
     serve_sh = _read("scripts/serve.sh")
 

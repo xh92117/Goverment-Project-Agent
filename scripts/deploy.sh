@@ -94,6 +94,13 @@ else
     echo -e "${GREEN}✓ config.yaml: $AGENT_BASE_CONFIG_PATH${NC}"
 fi
 
+if [ "$CMD" != "down" ] && [ ! -w "$AGENT_BASE_CONFIG_PATH" ]; then
+    echo -e "${RED}✗ config.yaml is not writable: $AGENT_BASE_CONFIG_PATH${NC}" >&2
+    echo "  The Gateway admin settings APIs persist model and parser selections to this file." >&2
+    echo "  Grant the deployment user write access before starting the stack." >&2
+    exit 1
+fi
+
 # ── extensions_config.json ───────────────────────────────────────────────────
 
 if [ -z "$AGENT_BASE_EXTENSIONS_CONFIG_PATH" ] && [ -z "$DEER_FLOW_EXTENSIONS_CONFIG_PATH" ]; then

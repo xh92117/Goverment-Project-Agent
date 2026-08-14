@@ -1,6 +1,8 @@
 # Agent Base production deployment for server 192.168.2.97.
 # Host paths come from ../.env; runtime paths below are container paths.
 
+name: agent-base
+
 services:
   nginx:
     image: ${NGINX_IMAGE:-m.daocloud.io/docker.io/library/nginx:alpine}
@@ -53,7 +55,8 @@ services:
     container_name: agent-base-gateway
     command: sh -c "cd /app/backend && PYTHONPATH=. uv run --no-sync uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 --workers ${GATEWAY_WORKERS:-4}"
     volumes:
-      - ${AGENT_BASE_CONFIG_PATH:-${DEER_FLOW_CONFIG_PATH}}:/app/backend/config.yaml:ro
+      # Admin settings APIs persist model/parser selections to config.yaml.
+      - ${AGENT_BASE_CONFIG_PATH:-${DEER_FLOW_CONFIG_PATH}}:/app/backend/config.yaml
       - ${AGENT_BASE_EXTENSIONS_CONFIG_PATH:-${DEER_FLOW_EXTENSIONS_CONFIG_PATH}}:/app/backend/extensions_config.json:ro
       - ../skills:/app/skills:ro
       - ${AGENT_BASE_HOME}:/app/backend/.agent-base

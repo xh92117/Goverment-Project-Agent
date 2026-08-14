@@ -17,6 +17,27 @@ def test_responses_api_fields_are_declared_in_model_schema():
     assert "output_version" in ModelConfig.model_fields
 
 
+def test_write_raw_config_reports_read_only_deployment(monkeypatch, tmp_path):
+    import builtins
+    import errno
+
+    import pytest
+    from fastapi import HTTPException
+
+    from app.gateway.routers import models as models_router
+
+    def read_only_open(*_args, **_kwargs):
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(builtins, "open", read_only_open)
+
+    with pytest.raises(HTTPException) as exc_info:
+        models_router._write_raw_config(tmp_path / "config.yaml", {"models": []})
+
+    assert exc_info.value.status_code == 503
+    assert "config.yaml is not writable" in str(exc_info.value.detail)
+
+
 def test_responses_api_fields_round_trip_in_model_dump():
     config = _make_model(
         api_key="$OPENAI_API_KEY",
