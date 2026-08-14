@@ -99,6 +99,15 @@ A build warning for missing vision capability opens the same dialog, but must
 not block normal document indexing. Keep this entry in the header instead of
 restoring applicant or image-preview panels.
 
+The index-only rebuild action starts `POST /api/knowledge/index/build-jobs` and
+polls the returned job instead of holding one HTTP request open. Render the
+persisted `progress.message`, counts, and percentage, then show the compact
+result's `quality_report` with its score, body coverage, error/warning totals,
+and representative issues. Treat `completed_with_warnings` as a successful
+response with visible diagnostics; only `failed` is a request error. The
+organize-and-build action still uses its compatibility endpoint until the
+incremental pipeline receives its own background job contract.
+
 The existing knowledge-tree toolbar conditionally exposes batch evidence review
 actions, without restoring the removed image preview section. Only visible
 `needs_review` evidence whose index metadata has `extraction_status=completed`

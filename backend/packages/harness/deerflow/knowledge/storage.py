@@ -12,8 +12,10 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from deerflow.config import get_app_config
 from deerflow.config.paths import get_paths
 from deerflow.government_project_workspace import government_project_knowledge_root
+from deerflow.knowledge.content_store import load_index_entry_content
 from deerflow.knowledge.extractors import extract_text
 from deerflow.knowledge.schemas import (
     KnowledgeDocument,
@@ -41,6 +43,7 @@ from deerflow.knowledge.schemas import (
 )
 from deerflow.knowledge.semantic_search import expand_knowledge_index_search_request
 from deerflow.knowledge.sqlite_index import (
+    KnowledgeIndexCandidate,
     search_sqlite_knowledge_index_candidates,
     sync_sqlite_knowledge_index,
 )
@@ -229,7 +232,7 @@ def _score_document(document: KnowledgeDocument, query: str) -> tuple[float, lis
     return score, matched
 
 
-def _score_index_entry(entry: KnowledgeIndexEntry, query: str) -> tuple[float, list[str]]:
+def _score_index_entry(entry: KnowledgeIndexEntry, query: str, *, content: str = "") -> tuple[float, list[str]]:
     if not query:
         return 1.0, []
 
@@ -258,6 +261,8 @@ def _score_index_entry(entry: KnowledgeIndexEntry, query: str) -> tuple[float, l
         "summary": entry.summary,
         "file_path": entry.file_path,
         "project_types": _join_values(entry.project_types),
+        "content": content,
+        "metadata": _flatten_metadata(entry.metadata),
     }
     weights = {
         "title": 5.0,
@@ -280,6 +285,8 @@ def _score_index_entry(entry: KnowledgeIndexEntry, query: str) -> tuple[float, l
         "summary": 2.0,
         "file_path": 2.0,
         "project_types": 2.0,
+        "content": 1.5,
+        "metadata": 1.0,
     }
     score = 0.0
     matched: list[str] = []
@@ -300,7 +307,7 @@ def _score_index_entry(entry: KnowledgeIndexEntry, query: str) -> tuple[float, l
     return score, matched
 
 
-def _index_entry_semantic_text(entry: KnowledgeIndexEntry) -> str:
+def _index_entry_semantic_text(entry: KnowledgeIndexEntry, *, content: str = "") -> str:
     recommended = " ".join(" ".join([section.heading, section.anchor or "", section.summary, _join_values(section.use_for)]) for section in entry.recommended_sections)
     return " ".join(
         [
@@ -329,12 +336,13 @@ def _index_entry_semantic_text(entry: KnowledgeIndexEntry) -> str:
             _join_values(entry.project_types),
             _flatten_metadata(entry.metadata),
             recommended,
+            content,
         ]
     )
 
 
-def _score_index_entry_semantic(entry: KnowledgeIndexEntry, query: str) -> float:
-    return semantic_similarity(query, _index_entry_semantic_text(entry))
+def _score_index_entry_semantic(entry: KnowledgeIndexEntry, query: str, *, content: str = "") -> float:
+    return semantic_similarity(query, _index_entry_semantic_text(entry, content=content))
 
 
 def _bounded_index_search_score(score: float) -> float:
@@ -929,7 +937,7 @@ def _list_search_index_candidates(
     request: KnowledgeIndexSearchRequest,
     *,
     user_id: str | None = None,
-) -> list[KnowledgeIndexEntry]:
+) -> list[KnowledgeIndexCandidate]:
     try:
         entries = search_sqlite_knowledge_index_candidates(
             request,
@@ -940,7 +948,15 @@ def _list_search_index_candidates(
         entries = None
     if entries is not None:
         return entries
-    return get_knowledge_storage().list_indexes(user_id=user_id)
+    root = _knowledge_root_path(user_id=user_id)
+    content_max_chars = get_app_config().knowledge_retrieval.content_max_chars
+    return [
+        KnowledgeIndexCandidate(
+            entry=entry,
+            content_text=load_index_entry_content(root, entry, max_chars=content_max_chars),
+        )
+        for entry in get_knowledge_storage().list_indexes(user_id=user_id)
+    ]
 
 
 def search_knowledge_index_entries(
@@ -953,13 +969,14 @@ def search_knowledge_index_entries(
     lexical_queries = _lexical_queries(request, expanded_request.query)
     candidate_query = " ".join(query for query, _ in lexical_queries)
     candidate_request = expanded_request.model_copy(update={"query": candidate_query})
-    entries = _list_search_index_candidates(candidate_request, user_id=user_id)
+    candidates = _list_search_index_candidates(candidate_request, user_id=user_id)
     results: list[KnowledgeIndexSearchResult] = []
 
     semantic_enabled = expanded_request.search_mode in {"hybrid", "semantic"}
     keyword_enabled = expanded_request.search_mode in {"hybrid", "keyword"}
 
-    for entry in entries:
+    for candidate in candidates:
+        entry = candidate.entry
         if expanded_request.entry_types and entry.entry_type not in expanded_request.entry_types:
             continue
         if expanded_request.categories and entry.category not in expanded_request.categories:
@@ -990,13 +1007,14 @@ def search_knowledge_index_entries(
         if any(not _metadata_value_matches(entry.metadata.get(key), value) for key, value in expanded_request.metadata_filters.items()):
             continue
 
+        content = candidate.content_text
         score = 0.0
         expanded_score = 0.0
         matched_fields: list[str] = []
         matched_queries: list[str] = []
         if keyword_enabled:
             for lexical_query, weight in lexical_queries:
-                lexical_score, lexical_fields = _score_index_entry(entry, lexical_query)
+                lexical_score, lexical_fields = _score_index_entry(entry, lexical_query, content=content)
                 if lexical_score <= 0:
                     continue
                 weighted_score = lexical_score * weight
@@ -1008,8 +1026,8 @@ def search_knowledge_index_entries(
         semantic_score = 0.0
         if semantic_enabled:
             semantic_query = expanded_request.query if has_expanded_query else request.query
-            semantic_score = _score_index_entry_semantic(entry, semantic_query)
-            if semantic_score > 0.08 and "semantic_vector" not in matched_fields:
+            semantic_score = candidate.semantic_score or _score_index_entry_semantic(entry, semantic_query, content=content)
+            if semantic_score > get_app_config().knowledge_retrieval.semantic_min_similarity and "semantic_vector" not in matched_fields:
                 matched_fields.append("semantic_vector")
 
         combined_score = score + (semantic_score * expanded_request.semantic_weight)
@@ -1024,7 +1042,11 @@ def search_knowledge_index_entries(
             )
         )
 
-    results.sort(key=lambda result: (result.score, result.entry.confidence, result.entry.updated_at), reverse=True)
+    requested_chunk_group = expanded_request.metadata_filters.get("chunk_group_id")
+    if requested_chunk_group:
+        results.sort(key=lambda result: int(result.entry.metadata.get("chunk_sequence", 1)))
+    else:
+        results.sort(key=lambda result: (result.score, result.entry.confidence, result.entry.updated_at), reverse=True)
     limited = [
         KnowledgeIndexSearchResult(
             entry=result.entry,

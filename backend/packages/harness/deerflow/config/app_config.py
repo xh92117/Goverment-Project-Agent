@@ -21,6 +21,7 @@ from deerflow.config.database_config import (
 from deerflow.config.execution_modes_config import ExecutionModesConfig
 from deerflow.config.extensions_config import ExtensionsConfig
 from deerflow.config.guardrails_config import GuardrailsConfig, load_guardrails_config_from_dict
+from deerflow.config.knowledge_retrieval_config import KnowledgeRetrievalConfig
 from deerflow.config.loop_detection_config import LoopDetectionConfig
 from deerflow.config.memory_config import MemoryConfig, load_memory_config_from_dict
 from deerflow.config.model_config import ModelConfig
@@ -103,6 +104,10 @@ class AppConfig(BaseModel):
     knowledge_image_model: str | None = Field(
         default=None,
         description="Preferred supports_vision model for knowledge image extraction; falls back to the first vision-capable model.",
+    )
+    knowledge_retrieval: KnowledgeRetrievalConfig = Field(
+        default_factory=KnowledgeRetrievalConfig,
+        description="Knowledge full-text, hybrid retrieval, and optional embedding configuration.",
     )
     sandbox: SandboxConfig = Field(
         description=format_field_description(

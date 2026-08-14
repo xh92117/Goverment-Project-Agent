@@ -70,7 +70,53 @@ export interface KnowledgeIndexBuildResult {
     sqlite_index_enabled?: boolean;
     sqlite_index_bytes?: number;
     elapsed_seconds?: number;
+    embedding_signature?: string;
+    embedding_configured_signature?: string;
+    embedding_generated_count?: number;
+    embedding_reused_count?: number;
+    embedding_fallback?: boolean;
   };
+  quality_report?: KnowledgeBuildQualityReport | null;
+}
+
+export interface KnowledgeBuildQualityReport {
+  enabled: boolean;
+  passed: boolean;
+  score: number;
+  checked_entries: number;
+  error_count: number;
+  warning_count: number;
+  metrics: Record<string, number | boolean>;
+  issues: Array<{
+    code: string;
+    severity: "warning" | "error";
+    message: string;
+    file_path?: string | null;
+    index_id?: string | null;
+    chunk_group_id?: string | null;
+  }>;
+}
+
+export interface KnowledgeBuildJob {
+  job_id: string;
+  state:
+    | "queued"
+    | "running"
+    | "completed"
+    | "completed_with_warnings"
+    | "failed";
+  progress: {
+    stage: string;
+    current: number;
+    total: number;
+    percent: number;
+    message: string;
+  };
+  result?: KnowledgeIndexBuildResult | null;
+  error?: string | null;
+  created_at: string;
+  started_at?: string | null;
+  finished_at?: string | null;
 }
 
 export interface KnowledgeIndexPageResult {
@@ -477,12 +523,13 @@ export function saveKnowledgeFile(
   );
 }
 
-export function buildKnowledgeIndex(
+export async function buildKnowledgeIndex(
   folderPath?: string,
   scope: KnowledgeScope = "private",
+  onProgress?: (job: KnowledgeBuildJob) => void,
 ) {
-  return apiJson<KnowledgeIndexBuildResult>(
-    `/api/knowledge/index/build?scope=${scope}`,
+  let job = await apiJson<KnowledgeBuildJob>(
+    `/api/knowledge/index/build-jobs?scope=${scope}`,
     {
       method: "POST",
       body: jsonBody({
@@ -494,6 +541,27 @@ export function buildKnowledgeIndex(
       }),
     },
   );
+  onProgress?.(job);
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (job.state === "queued" || job.state === "running") {
+    if (Date.now() >= deadline) {
+      throw new Error(
+        "知识库构建超过 30 分钟，任务仍可能在服务器后台继续执行。",
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 750));
+    job = await apiJson<KnowledgeBuildJob>(
+      `/api/knowledge/index/build-jobs/${encodeURIComponent(job.job_id)}?scope=${scope}`,
+    );
+    onProgress?.(job);
+  }
+  if (job.state === "failed") {
+    throw new Error(job.error ?? "知识库构建失败。");
+  }
+  if (!job.result) {
+    throw new Error("知识库构建已结束，但服务器未返回构建结果。");
+  }
+  return job.result;
 }
 
 export function incrementalUpdateKnowledge(scope: KnowledgeScope = "private") {

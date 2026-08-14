@@ -120,7 +120,9 @@ src/
 - The default entry is the government declaration assistant, not the generic
   base chat route.
 - Knowledge-base content is managed through the workspace knowledge area and
-  LLM-Wiki index files.
+  LLM-Wiki index files. Rebuilds use a background-job API, display persisted
+  server progress, and surface body coverage, quality score, and representative
+  quality issues when the build completes.
 - Proposal drafts are stored as Markdown artifacts and surfaced in the draft
   management page.
 - Both project-creation entry points require an explicit workspace-directory

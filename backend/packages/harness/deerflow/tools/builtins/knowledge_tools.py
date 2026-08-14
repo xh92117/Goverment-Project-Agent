@@ -8,6 +8,7 @@ from urllib.parse import quote
 
 from langchain.tools import tool
 
+from deerflow.config import get_app_config
 from deerflow.knowledge import (
     KnowledgeFileReadRequest,
     KnowledgeIndexBuildRequest,
@@ -64,6 +65,7 @@ def knowledge_search_index_tool(
     years: list[int] | None = None,
     valid_on: str | None = None,
     applicant_ids: list[str] | None = None,
+    chunk_group_id: str | None = None,
     limit: int = 10,
 ) -> str:
     """Search the LLM-Wiki knowledge-base index before reading source files.
@@ -86,11 +88,15 @@ def knowledge_search_index_tool(
         years: Optional applicable or publication years. Use this for year-specific policy work.
         valid_on: Optional ISO date used to exclude expired or not-yet-effective sources.
         applicant_ids: Optional applicant-owner filter for applicant-specific evidence.
+        chunk_group_id: Optional group id from a prior result; use it to retrieve every ordered block belonging to the same logical section.
         limit: Maximum number of index results to return.
     """
+    planned_variants = list(query_variants or [])
+    if chunk_group_id and chunk_group_id not in planned_variants:
+        planned_variants = [*planned_variants[:7], chunk_group_id]
     request = KnowledgeIndexSearchRequest(
         query=query,
-        query_variants=query_variants or [],
+        query_variants=planned_variants,
         entry_types=entry_types,
         categories=categories,
         applicable_chapters=applicable_chapters,
@@ -101,7 +107,8 @@ def knowledge_search_index_tool(
         years=years,
         valid_on=valid_on,
         applicant_ids=applicant_ids,
-        search_mode="keyword",
+        metadata_filters={"chunk_group_id": chunk_group_id} if chunk_group_id else {},
+        search_mode=get_app_config().knowledge_retrieval.default_search_mode,
         limit=max(1, min(limit, 50)),
     )
     if _can_read_public_knowledge():
@@ -137,6 +144,17 @@ def knowledge_search_index_tool(
             lines.append(f"source_anchor: {entry.source_anchor}")
         if entry.source_file_path:
             lines.append(f"source_path: {entry.source_file_path}")
+        if entry.metadata.get("chunk_group_id"):
+            lines.append(
+                "chunk_context: "
+                f"{entry.metadata.get('chunk_sequence', 1)}/{entry.metadata.get('chunk_count', 1)} "
+                f"group={entry.metadata['chunk_group_id']}"
+            )
+            if entry.metadata.get("previous_chunk_id"):
+                lines.append(f"previous_chunk_id: {entry.metadata['previous_chunk_id']}")
+            if entry.metadata.get("next_chunk_id"):
+                lines.append(f"next_chunk_id: {entry.metadata['next_chunk_id']}")
+            lines.append("context_hint: call knowledge_search_index again with this chunk_group_id to retrieve the complete ordered section")
         if entry.domain:
             lines.append(f"domain: {entry.domain}")
         if entry.authority:

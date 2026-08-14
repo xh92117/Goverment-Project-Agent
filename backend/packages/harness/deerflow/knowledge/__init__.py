@@ -12,6 +12,11 @@ from .assets import (
     search_knowledge_evidence,
     update_knowledge_evidence,
 )
+from .build_jobs import (
+    KnowledgeBuildJobConflictError,
+    KnowledgeBuildJobManager,
+    get_knowledge_build_job_manager,
+)
 from .export_images import (
     ExportEvidenceDocument,
     ExportEvidenceEnrichment,
@@ -32,6 +37,10 @@ from .organizer import (
 )
 from .schemas import (
     KnowledgeAsset,
+    KnowledgeBuildJob,
+    KnowledgeBuildJobProgress,
+    KnowledgeBuildQualityIssue,
+    KnowledgeBuildQualityReport,
     KnowledgeDocument,
     KnowledgeDocumentCreate,
     KnowledgeDocumentPatch,
@@ -99,6 +108,12 @@ __all__ = [
     "KnowledgeDocumentCreate",
     "KnowledgeDocumentPatch",
     "KnowledgeAsset",
+    "KnowledgeBuildJob",
+    "KnowledgeBuildJobConflictError",
+    "KnowledgeBuildJobManager",
+    "KnowledgeBuildJobProgress",
+    "KnowledgeBuildQualityIssue",
+    "KnowledgeBuildQualityReport",
     "KnowledgeEvidence",
     "KnowledgeEvidencePatch",
     "KnowledgeFileReadRequest",
@@ -143,6 +158,7 @@ __all__ = [
     "extract_pending_knowledge_evidence",
     "enrich_export_documents_with_images",
     "get_knowledge_document",
+    "get_knowledge_build_job_manager",
     "get_knowledge_asset",
     "get_knowledge_evidence",
     "get_knowledge_index_entry",
