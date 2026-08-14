@@ -751,6 +751,61 @@ Focused coverage lives in `tests/test_knowledge_assets.py` and
 `tests/test_docx_evidence_images.py`; existing knowledge regressions remain in
 `tests/test_knowledge_base.py`.
 
+### Knowledge Text Index and Retrieval
+
+The text index is format-neutral after `extract_text_with_metadata()`: PDF,
+DOCX, spreadsheets, Markdown, and plain text all enter the same chunk and
+retrieval contract. Do not make chunk eligibility depend on proposal-specific
+labels. `deerflow.knowledge.generator` must retain a generic body chunk for
+unclassified or heading-free content; a short one-heading document may rely on
+its fully indexed document body to avoid a duplicate chunk.
+
+- Generated chunks store all contributing `source_anchors`. Adjacent short
+  generic siblings may be merged, but recognized business sections remain
+  separate. Oversized logical sections share a stable `chunk_group_id` and
+  carry `chunk_id`, `chunk_sequence`, `chunk_count`, previous/next IDs, and
+  related IDs in both front matter and index metadata.
+- `knowledge_search_index` exposes the group context. Supplying a returned
+  `chunk_group_id` retrieves the complete group ordered by sequence.
+- `deerflow.knowledge.content_store` is the single path-validation boundary for
+  searchable bodies and `knowledge-file://` assets. Never copy absolute asset
+  paths into generated Markdown or resolve a URI without root containment.
+- The SQLite sidecar schema includes `content_text`; FTS/BM25 and fallback LIKE
+  candidate selection therefore search full chunk bodies, not only summaries
+  and keywords. JSON remains the compatibility/export store.
+- Retrieval defaults to hybrid mode. `AppConfig.knowledge_retrieval.embedding`
+  accepts a LangChain-compatible `module:Class` provider. Real vectors are
+  batched and tagged with a provider signature; a changed signature requires a
+  rebuild. Disabled or failed providers use the deterministic offline feature-
+  hash fallback instead of failing text indexing.
+- SQLite stores an `embedding_fingerprint` derived from stable semantic input.
+  A sync may reuse a vector only when both that fingerprint and the configured
+  provider signature match. Timestamps, parser cache state, source mtimes, and
+  chunk bookkeeping must not invalidate a vector. If a remote batch falls back
+  while some remote vectors were reusable, rebuild every entry locally so one
+  SQLite index never mixes vector spaces. Persist generated/reused counts,
+  configured/actual signatures, and fallback state in SQLite metadata and copy
+  them into `KnowledgeIndexBuildResponse.scale_stats`.
+- `POST /api/knowledge/index/build-jobs` is the non-blocking rebuild entry point.
+  Poll the returned job through `GET /api/knowledge/index/build-jobs/{job_id}`;
+  job snapshots live below `.index/build_jobs/` and intentionally omit the full
+  `entries` array. A root-level `.index/build.lock` prevents two writers from
+  rebuilding one library at once. The executor is process-local even though
+  snapshots are file-backed, so a horizontally scaled deployment needs a shared
+  durable queue for worker failover.
+- Each build runs `deerflow.knowledge.quality` after synchronization and returns
+  `quality_report`. Checks are format-neutral and cover indexed-body coverage,
+  empty/short/oversized leaf chunks, exact duplicates, canonical asset targets,
+  and chunk-group sequence/neighbor integrity. A failed threshold currently
+  produces `completed_with_warnings`; it is an advisory publish gate until index
+  generation is moved behind a staged atomic swap.
+
+Focused V2 and job/quality coverage lives in `tests/test_knowledge_v2.py` and
+`tests/test_knowledge_build_jobs.py`; retain the broader
+regressions in `tests/test_knowledge_base.py`, `tests/test_knowledge_assets.py`,
+`tests/test_knowledge_scope_isolation.py`, and
+`tests/test_knowledge_retrieval_eval.py`.
+
 ### Plan Mode
 
 TodoList middleware for complex multi-step tasks:

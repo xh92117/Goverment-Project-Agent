@@ -394,6 +394,30 @@ class KnowledgeIndexBuildRequest(BaseModel):
     incremental: bool = Field(default=True, description="Skip unchanged source files when existing chunks are valid")
 
 
+class KnowledgeBuildQualityIssue(BaseModel):
+    """One actionable post-build quality finding."""
+
+    code: str
+    severity: Literal["warning", "error"]
+    message: str
+    file_path: str | None = None
+    index_id: str | None = None
+    chunk_group_id: str | None = None
+
+
+class KnowledgeBuildQualityReport(BaseModel):
+    """Format-neutral quality gate report for a completed index build."""
+
+    enabled: bool = True
+    passed: bool
+    score: float = Field(ge=0.0, le=100.0)
+    checked_entries: int = 0
+    error_count: int = 0
+    warning_count: int = 0
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    issues: list[KnowledgeBuildQualityIssue] = Field(default_factory=list)
+
+
 class KnowledgeIndexBuildResponse(BaseModel):
     """Response after building index entries from source files."""
 
@@ -413,7 +437,35 @@ class KnowledgeIndexBuildResponse(BaseModel):
     parse_errors: list[dict[str, str]] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     scale_stats: dict[str, Any] = Field(default_factory=dict)
+    quality_report: KnowledgeBuildQualityReport | None = None
     entries: list[KnowledgeIndexEntry] = Field(default_factory=list)
+
+
+KnowledgeBuildJobState = Literal["queued", "running", "completed", "completed_with_warnings", "failed"]
+
+
+class KnowledgeBuildJobProgress(BaseModel):
+    """Current progress snapshot for an asynchronous knowledge build."""
+
+    stage: str = "queued"
+    current: int = 0
+    total: int = 0
+    percent: float = Field(default=0.0, ge=0.0, le=100.0)
+    message: str = ""
+
+
+class KnowledgeBuildJob(BaseModel):
+    """Persisted status and optional result for one background build."""
+
+    job_id: str
+    state: KnowledgeBuildJobState = "queued"
+    request: KnowledgeIndexBuildRequest
+    progress: KnowledgeBuildJobProgress = Field(default_factory=KnowledgeBuildJobProgress)
+    result: KnowledgeIndexBuildResponse | None = None
+    error: str | None = None
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
 
 
 class KnowledgeIncomingRule(BaseModel):

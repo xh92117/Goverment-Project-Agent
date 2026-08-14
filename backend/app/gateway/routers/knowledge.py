@@ -1,5 +1,6 @@
 """Knowledge-base API for government project declaration materials."""
 
+import asyncio
 import dataclasses
 import shutil
 from pathlib import Path
@@ -11,6 +12,8 @@ from pydantic import BaseModel, Field
 
 from app.gateway.admin import require_admin_user
 from deerflow.knowledge import (
+    KnowledgeBuildJob,
+    KnowledgeBuildJobConflictError,
     KnowledgeDocument,
     KnowledgeDocumentCreate,
     KnowledgeDocumentPatch,
@@ -44,6 +47,7 @@ from deerflow.knowledge import (
     delete_knowledge_index_entry,
     evaluate_knowledge_recall,
     get_knowledge_asset,
+    get_knowledge_build_job_manager,
     get_knowledge_document,
     get_knowledge_evidence,
     get_knowledge_index_entry,
@@ -707,11 +711,64 @@ async def build_index(
     """Build LLM-Wiki index entries from a folder."""
     try:
         await _authorize_public_write(scope, request)
-        return build_knowledge_index_from_folder(body, user_id=_scope_user_id(scope))
+        return await asyncio.to_thread(build_knowledge_index_from_folder, body, user_id=_scope_user_id(scope))
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge folder '{body.folder_path}' not found.") from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post(
+    "/index/build-jobs",
+    response_model=KnowledgeBuildJob,
+    response_model_exclude_none=True,
+    status_code=202,
+    summary="Start Knowledge Index Build Job",
+    description="Start a non-blocking knowledge build and return a persisted progress handle.",
+)
+async def start_build_job(
+    body: KnowledgeIndexBuildRequest,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeBuildJob:
+    await _authorize_public_write(scope, request)
+    try:
+        return get_knowledge_build_job_manager().submit(body, user_id=_scope_user_id(scope))
+    except KnowledgeBuildJobConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get(
+    "/index/build-jobs",
+    response_model=list[KnowledgeBuildJob],
+    response_model_exclude_none=True,
+    summary="List Knowledge Index Build Jobs",
+)
+async def list_build_jobs(
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+    limit: int = Query(default=20, ge=1, le=50),
+) -> list[KnowledgeBuildJob]:
+    await _authorize_public_read(scope, request)
+    return get_knowledge_build_job_manager().list(user_id=_scope_user_id(scope), limit=limit)
+
+
+@router.get(
+    "/index/build-jobs/{job_id}",
+    response_model=KnowledgeBuildJob,
+    response_model_exclude_none=True,
+    summary="Get Knowledge Index Build Job",
+)
+async def get_build_job(
+    job_id: str,
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+) -> KnowledgeBuildJob:
+    await _authorize_public_read(scope, request)
+    try:
+        return get_knowledge_build_job_manager().get(job_id, user_id=_scope_user_id(scope))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Knowledge build job was not found.") from exc
 
 
 @router.post(
@@ -730,7 +787,7 @@ async def incremental_update(
     await _authorize_public_write(scope, request)
     user_id = _scope_user_id(scope)
     try:
-        return _run_incremental_update(body, user_id=user_id)
+        return await asyncio.to_thread(_run_incremental_update, body, user_id=user_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge folder '{body.folder_path}' not found.") from exc
     except ValueError as exc:
@@ -755,7 +812,7 @@ async def process_incoming_and_build_index(
     try:
         body.organize_incoming = True
         body.replace_existing = True
-        return _run_incremental_update(body, user_id=user_id)
+        return await asyncio.to_thread(_run_incremental_update, body, user_id=user_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=f"Knowledge folder '{body.folder_path}' not found.") from exc
     except ValueError as exc:

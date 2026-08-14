@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from deerflow.knowledge.content_store import rewrite_markdown_asset_links
 from deerflow.knowledge.extractors import extract_text_with_metadata
+from deerflow.knowledge.quality import evaluate_knowledge_build_quality
 from deerflow.knowledge.schemas import (
     KnowledgeIndexBuildRequest,
     KnowledgeIndexBuildResponse,
@@ -17,7 +21,7 @@ from deerflow.knowledge.schemas import (
     KnowledgeIndexEntryCreate,
     KnowledgeIndexSection,
 )
-from deerflow.knowledge.sqlite_index import sqlite_knowledge_index_path
+from deerflow.knowledge.sqlite_index import sqlite_knowledge_index_path, sqlite_knowledge_index_stats
 from deerflow.knowledge.storage import (
     _knowledge_root_path,
     backup_knowledge_index,
@@ -25,11 +29,14 @@ from deerflow.knowledge.storage import (
 )
 from deerflow.utils.time import now_iso
 
+logger = logging.getLogger(__name__)
+KnowledgeBuildProgressCallback = Callable[[str, int, int, float, str], None]
+
 _MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _ZH_SECTION_HEADING_RE = re.compile(r"^（[一二三四五六七八九十]+）")
 _DECIMAL_HEADING_RE = re.compile(r"^(\d+(?:\.\d+)+)\s+")
 _SIMPLE_DOT_HEADING_RE = re.compile(r"^\d+\.\S+")
-_TOP_NUMBER_HEADING_RE = re.compile(r"^\d+[．、]\s*")
+_TOP_NUMBER_HEADING_RE = re.compile(r"^\d+(?:[．、]|\s+)")
 _SUPPORTED_TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".docx", ".pdf", ".xlsx", ".xls", ".csv", ".tsv"}
 _SOURCE_FORMAT_PRIORITY = {
     ".pdf": 50,
@@ -42,7 +49,7 @@ _SOURCE_FORMAT_PRIORITY = {
     ".tsv": 25,
     ".txt": 20,
 }
-_INDEXER_VERSION = "2"
+_INDEXER_VERSION = "3"
 _CATEGORY_ALIASES = {
     "policy_guides": "政策指南",
     "templates": "申报书模板",
@@ -281,6 +288,18 @@ class _SemanticChunkCandidate:
     heading_path: tuple[str, ...]
     chunk_order: int
     source_anchor: str
+    source_anchors: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class _ChunkRelations:
+    chunk_id: str
+    chunk_group_id: str
+    chunk_sequence: int
+    chunk_count: int
+    previous_chunk_id: str | None
+    next_chunk_id: str | None
+    related_chunk_ids: tuple[str, ...]
 
 
 def _resolve_folder(folder_path: str, *, user_id: str | None = None) -> Path:
@@ -731,18 +750,111 @@ def _is_thin_leaf_block(block: _StructuredHeadingBlock) -> bool:
     return not any(marker in text for marker in _SHORT_BLOCK_KEEP_MARKERS)
 
 
+def _generic_body_candidates(content: str, category: str) -> list[_SemanticChunkCandidate]:
+    """Keep useful text even when the parser cannot infer a document taxonomy."""
+
+    cleaned = content.strip()
+    if not cleaned:
+        return []
+    candidates: list[_SemanticChunkCandidate] = []
+    for part_heading, part_content in _split_leaf_block("正文", cleaned):
+        candidates.append(
+            _SemanticChunkCandidate(
+                level=1,
+                heading=part_heading,
+                content=part_content,
+                proposal_sections=(category,),
+                chunk_kind="leaf_evidence",
+                content_role=_infer_content_role(part_heading, part_content),
+                heading_path=("正文",),
+                chunk_order=len(candidates) + 1,
+                source_anchor="正文",
+                source_anchors=("正文",),
+            )
+        )
+    return candidates
+
+
+def _merge_short_sibling_candidates(candidates: list[_SemanticChunkCandidate]) -> list[_SemanticChunkCandidate]:
+    """Merge adjacent short leaf blocks while retaining every source anchor."""
+
+    merged: list[_SemanticChunkCandidate] = []
+    pending: list[_SemanticChunkCandidate] = []
+
+    def compatible(left: _SemanticChunkCandidate, right: _SemanticChunkCandidate) -> bool:
+        same_generic_sibling_group = (
+            left.chunk_kind == right.chunk_kind == "leaf_evidence" and left.source_anchor != right.source_anchor and left.heading_path[:-1] == right.heading_path[:-1] and left.proposal_sections[:1] == right.proposal_sections[:1]
+        )
+        if not same_generic_sibling_group:
+            return False
+        if left.proposal_sections and _proposal_key_for_value(left.proposal_sections[0]) is not None:
+            return False
+        return len(left.content) + len(right.content) <= _TARGET_CHUNK_CHARS and (len(left.content) < _MIN_CHUNK_CHARS or len(right.content) < _MIN_CHUNK_CHARS)
+
+    def flush() -> None:
+        if not pending:
+            return
+        first = pending[0]
+        anchors: list[str] = []
+        for item in pending:
+            _add_unique(anchors, list(item.source_anchors or (item.source_anchor,)))
+        if len(pending) == 1:
+            merged.append(
+                _SemanticChunkCandidate(
+                    **{
+                        **first.__dict__,
+                        "source_anchors": tuple(anchors),
+                    }
+                )
+            )
+        else:
+            headings = [item.heading for item in pending]
+            merged.append(
+                _SemanticChunkCandidate(
+                    level=min(item.level for item in pending),
+                    heading=" / ".join(headings),
+                    content="\n\n".join(item.content.strip() for item in pending),
+                    proposal_sections=first.proposal_sections,
+                    chunk_kind="leaf_evidence",
+                    content_role=first.content_role if len({item.content_role for item in pending}) == 1 else "evidence",
+                    heading_path=(*first.heading_path[:-1], " / ".join(headings)),
+                    chunk_order=first.chunk_order,
+                    source_anchor=anchors[0],
+                    source_anchors=tuple(anchors),
+                )
+            )
+        pending.clear()
+
+    for candidate in candidates:
+        if not pending:
+            pending.append(candidate)
+        elif compatible(pending[-1], candidate) and sum(len(item.content) for item in pending) + len(candidate.content) <= _TARGET_CHUNK_CHARS:
+            pending.append(candidate)
+        else:
+            flush()
+            pending.append(candidate)
+    flush()
+
+    return [_SemanticChunkCandidate(**{**candidate.__dict__, "chunk_order": index}) for index, candidate in enumerate(merged, start=1)]
+
+
 def _build_semantic_chunk_candidates(content: str, category: str) -> list[_SemanticChunkCandidate]:
     candidates: list[_SemanticChunkCandidate] = []
-    for block in _structured_heading_blocks(content):
+    blocks = _structured_heading_blocks(content)
+    if not blocks:
+        return _generic_body_candidates(content, category)
+    if len(blocks) == 1 and blocks[0].level == 1 and not blocks[0].has_children and _body_text_chars(blocks[0].block) < _MIN_CHUNK_CHARS:
+        # The searchable document body already covers a tiny title-only file;
+        # avoid creating a duplicate chunk that carries no extra granularity.
+        return []
+
+    for block in blocks:
         if block.level > 5:
             continue
         if _is_generic_wrapper_heading(block.heading):
             continue
         if _is_low_value_front_matter(block):
             continue
-        if _is_thin_leaf_block(block):
-            continue
-
         context_headings = "\n".join(block.heading_path[:-1])
         inherited_sections = _proposal_sections_for(context_headings, "") if context_headings else []
         target_text = block.own_content if block.has_children else block.block
@@ -750,9 +862,11 @@ def _build_semantic_chunk_candidates(content: str, category: str) -> list[_Seman
         primary_key = _primary_section_key_for(block.heading, target_text, detected_sections, inherited_sections)
         proposal_sections = _sections_with_primary(primary_key, detected_sections, inherited_sections)
         if not proposal_sections:
-            continue
+            proposal_sections = (category,)
 
         if block.has_children:
+            if _TOP_NUMBER_HEADING_RE.match(block.heading) and _body_text_chars(block.own_content) < 80:
+                continue
             summary_heading = f"{block.heading} 摘要"
             candidates.append(
                 _SemanticChunkCandidate(
@@ -765,22 +879,12 @@ def _build_semantic_chunk_candidates(content: str, category: str) -> list[_Seman
                     heading_path=block.heading_path,
                     chunk_order=len(candidates) + 1,
                     source_anchor=block.heading,
+                    source_anchors=(block.heading,),
                 )
             )
             continue
 
         content_role = _infer_content_role(block.heading, block.block)
-        keep_short_sections = {
-            "application_requirements",
-            "budget_basis",
-            "domestic_foreign_status",
-            "expected_outputs",
-            "references",
-            "research_content",
-            "technical_route",
-        }
-        if _body_text_chars(block.block) < 80 and content_role in {"evidence", "problem", "method_design"} and not any(section in proposal_sections for section in keep_short_sections):
-            continue
         for part_heading, part_content in _split_leaf_block(block.heading, block.block):
             candidates.append(
                 _SemanticChunkCandidate(
@@ -793,9 +897,44 @@ def _build_semantic_chunk_candidates(content: str, category: str) -> list[_Seman
                     heading_path=block.heading_path,
                     chunk_order=len(candidates) + 1,
                     source_anchor=block.heading,
+                    source_anchors=(block.heading,),
                 )
             )
-    return candidates
+    return _merge_short_sibling_candidates(candidates)
+
+
+def _stable_chunk_identifier(prefix: str, *parts: object) -> str:
+    raw = "\x1f".join(str(part) for part in parts)
+    return f"{prefix}_{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:20]}"
+
+
+def _build_chunk_relations(
+    candidates: list[_SemanticChunkCandidate],
+    *,
+    source_relative_path: str,
+) -> dict[int, _ChunkRelations]:
+    """Create stable sibling links for chunks split from one logical section."""
+
+    groups: dict[tuple[str, str], list[_SemanticChunkCandidate]] = {}
+    for candidate in candidates:
+        key = (candidate.source_anchor, candidate.chunk_kind)
+        groups.setdefault(key, []).append(candidate)
+
+    relations: dict[int, _ChunkRelations] = {}
+    for (source_anchor, chunk_kind), members in groups.items():
+        group_id = _stable_chunk_identifier("cgrp", source_relative_path, source_anchor, chunk_kind)
+        chunk_ids = [_stable_chunk_identifier("chk", group_id, sequence) for sequence in range(1, len(members) + 1)]
+        for index, candidate in enumerate(members):
+            relations[candidate.chunk_order] = _ChunkRelations(
+                chunk_id=chunk_ids[index],
+                chunk_group_id=group_id,
+                chunk_sequence=index + 1,
+                chunk_count=len(members),
+                previous_chunk_id=chunk_ids[index - 1] if index > 0 else None,
+                next_chunk_id=chunk_ids[index + 1] if index + 1 < len(chunk_ids) else None,
+                related_chunk_ids=tuple(chunk_id for chunk_id in chunk_ids if chunk_id != chunk_ids[index]),
+            )
+    return relations
 
 
 def _extract_title(path: Path, content: str) -> str:
@@ -1008,10 +1147,12 @@ def _write_section_chunk(
     methods: list[str],
     research_objects: list[str],
     source_anchor: str | None = None,
+    source_anchors: tuple[str, ...] = (),
     chunk_kind: str = "leaf_evidence",
     content_role: str = "evidence",
     heading_path: tuple[str, ...] = (),
     chunk_order: int = 0,
+    relations: _ChunkRelations | None = None,
 ) -> str:
     label = _canonical_proposal_label(proposal_sections, category)
     project_folder = _safe_filename_part(title, max_chars=120)
@@ -1019,18 +1160,28 @@ def _write_section_chunk(
     chunk_path = root / _GENERATED_CHUNKS_DIR / label / project_folder / filename
     chunk_path.parent.mkdir(parents=True, exist_ok=True)
     anchor = source_anchor or heading
+    anchors = source_anchors or (anchor,)
+    content = rewrite_markdown_asset_links(content, source_file_path=source_relative_path, root=root)
     chunk_path = _deduplicated_chunk_path(chunk_path, source_relative_path, anchor)
     primary_section = proposal_sections[0] if proposal_sections else ""
     front_matter = [
         "---",
         f"source_file: {source_relative_path}",
         f"source_anchor: {anchor}",
+        f"source_anchors: [{', '.join(anchors)}]",
         f"source_title: {title}",
         f"proposal_sections: [{', '.join(proposal_sections)}]",
         f"primary_section: {primary_section}",
         f"content_role: {content_role}",
         f"chunk_kind: {chunk_kind}",
         f"chunk_order: {chunk_order}",
+        f"chunk_id: {relations.chunk_id if relations else ''}",
+        f"chunk_group_id: {relations.chunk_group_id if relations else ''}",
+        f"chunk_sequence: {relations.chunk_sequence if relations else 1}",
+        f"chunk_count: {relations.chunk_count if relations else 1}",
+        f"previous_chunk_id: {relations.previous_chunk_id or '' if relations else ''}",
+        f"next_chunk_id: {relations.next_chunk_id or '' if relations else ''}",
+        f"related_chunk_ids: [{', '.join(relations.related_chunk_ids) if relations else ''}]",
         f"char_count: {len(content)}",
         f"heading_path: [{', '.join(heading_path or (heading,))}]",
         f"domain: {domain or ''}",
@@ -1181,6 +1332,7 @@ def _build_scale_stats(
 ) -> dict[str, object]:
     index_path = root / "index.json"
     sqlite_index_path = sqlite_knowledge_index_path(root)
+    embedding_stats = sqlite_knowledge_index_stats(root)
     index_json_bytes = index_path.stat().st_size if index_path.exists() else 0
     sqlite_index_bytes = sqlite_index_path.stat().st_size if sqlite_index_path.exists() else 0
     document_entries_total = sum(1 for entry in final_indexes if entry.entry_type == "document")
@@ -1194,6 +1346,7 @@ def _build_scale_stats(
         "index_json_bytes": index_json_bytes,
         "sqlite_index_enabled": sqlite_index_path.exists(),
         "sqlite_index_bytes": sqlite_index_bytes,
+        **embedding_stats,
         "elapsed_seconds": round(elapsed_seconds, 3),
         "thresholds": {
             "source_files_warning": _SOURCE_FILE_WARNING_THRESHOLD,
@@ -1210,6 +1363,8 @@ def _scale_warnings(scale_stats: dict[str, object], *, max_files_reached: bool) 
         warnings.append("本次扫描数量达到 max_files 限制，可能还有文件未纳入索引。")
     if not scale_stats.get("sqlite_index_enabled"):
         warnings.append("SQLite 本地检索索引未生成，当前将回退到 index.json 检索。")
+    if scale_stats.get("embedding_fallback"):
+        warnings.append("真实 Embedding Provider 未成功生成向量，本次索引已整体回退为离线特征向量；请检查模型、密钥和服务器网络。")
     if int(scale_stats.get("source_files_scanned", 0)) >= _SOURCE_FILE_WARNING_THRESHOLD:
         warnings.append("知识库源文件数量较多，当前会优先使用 SQLite FTS5 检索；建议继续观察 SQLite 索引大小和查询耗时。")
     if int(scale_stats.get("index_entries_total", 0)) >= _INDEX_ENTRY_WARNING_THRESHOLD:
@@ -1225,10 +1380,20 @@ def build_knowledge_index_from_folder(
     request: KnowledgeIndexBuildRequest,
     *,
     user_id: str | None = None,
+    progress_callback: KnowledgeBuildProgressCallback | None = None,
 ) -> KnowledgeIndexBuildResponse:
     """Scan a knowledge-base folder and build LLM-Wiki index entries."""
 
+    def report(stage: str, current: int, total: int, percent: float, message: str) -> None:
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(stage, current, total, percent, message)
+        except Exception:
+            logger.warning("Knowledge build progress callback failed.", exc_info=True)
+
     started_at = time.monotonic()
+    report("initializing", 0, 0, 0.0, "正在准备知识库构建。")
     root = _knowledge_root_path(user_id=user_id)
     folder = _resolve_folder(request.folder_path, user_id=user_id)
     if not folder.exists():
@@ -1243,6 +1408,7 @@ def build_knowledge_index_from_folder(
     # optional model providers.
     from deerflow.knowledge.assets import extract_pending_knowledge_evidence
 
+    report("evidence", 0, 0, 5.0, "正在处理待识别的图片证据。")
     _, image_warnings = extract_pending_knowledge_evidence(user_id=user_id)
     warnings.extend(image_warnings)
 
@@ -1263,6 +1429,7 @@ def build_knowledge_index_from_folder(
     discovered_source_files = _iter_source_files(folder, request)
     max_files_reached = len(discovered_source_files) >= request.max_files
     source_files, duplicate_source_files = _deduplicate_source_files(discovered_source_files, folder)
+    report("scanning", 0, len(source_files), 10.0, f"已发现 {len(source_files)} 个待检查源文件。")
     duplicate_source_paths = [_relative_to_root(path, user_id=user_id) for path in duplicate_source_files]
     if duplicate_source_paths:
         skipped += len(duplicate_source_paths)
@@ -1272,7 +1439,14 @@ def build_knowledge_index_from_folder(
         for duplicate_path in duplicate_source_paths:
             _cleanup_generated_chunks_for_source(root, duplicate_path)
 
-    for path in source_files:
+    for source_index, path in enumerate(source_files, start=1):
+        report(
+            "indexing",
+            source_index,
+            len(source_files),
+            10.0 + (78.0 * (source_index - 1) / max(1, len(source_files))),
+            f"正在解析并分块：{path.name}",
+        )
         relative_path = _relative_to_root(path, user_id=user_id)
         fingerprint = _file_fingerprint(path)
         existing = existing_by_file_path.get(relative_path)
@@ -1353,6 +1527,7 @@ def build_knowledge_index_from_folder(
             proposal_sections=applicable_chapters[:12],
             evidence_type="historical_proposal" if category == "历史申报书" else category,
             source_file_path=relative_path,
+            summary=_extract_summary(content, max_chars=800),
             project_types=request.project_types,
             metadata={
                 "parser": extraction.parser,
@@ -1375,7 +1550,10 @@ def build_knowledge_index_from_folder(
             kept_indexes = [kept for kept in kept_indexes if _source_file_for_entry(kept) != source_key and kept.file_path != source_key]
             _cleanup_generated_chunks_for_source(root, source_key)
 
-        for candidate in _build_semantic_chunk_candidates(content, category):
+        chunk_candidates = _build_semantic_chunk_candidates(content, category)
+        chunk_relations = _build_chunk_relations(chunk_candidates, source_relative_path=relative_path)
+        for candidate in chunk_candidates:
+            relations = chunk_relations[candidate.chunk_order]
             proposal_sections = list(candidate.proposal_sections)
             compact_sections = _compact_proposal_sections(proposal_sections, category)
             block_keywords = _extra_keywords(f"{candidate.heading}\n{candidate.content}", limit=10)
@@ -1396,10 +1574,12 @@ def build_knowledge_index_from_folder(
                 methods=block_methods,
                 research_objects=block_research_objects,
                 source_anchor=candidate.source_anchor,
+                source_anchors=candidate.source_anchors,
                 chunk_kind=candidate.chunk_kind,
                 content_role=candidate.content_role,
                 heading_path=candidate.heading_path,
                 chunk_order=candidate.chunk_order,
+                relations=relations,
             )
             chunk_files_created += 1
             section_payload = KnowledgeIndexEntryCreate(
@@ -1432,8 +1612,16 @@ def build_knowledge_index_from_folder(
                     "chunk_kind": candidate.chunk_kind,
                     "content_role": candidate.content_role,
                     "heading_path": list(candidate.heading_path),
+                    "source_anchors": list(candidate.source_anchors or (candidate.source_anchor,)),
                     "primary_section": compact_sections[0] if compact_sections else None,
                     "chunk_order": candidate.chunk_order,
+                    "chunk_id": relations.chunk_id,
+                    "chunk_group_id": relations.chunk_group_id,
+                    "chunk_sequence": relations.chunk_sequence,
+                    "chunk_count": relations.chunk_count,
+                    "previous_chunk_id": relations.previous_chunk_id,
+                    "next_chunk_id": relations.next_chunk_id,
+                    "related_chunk_ids": list(relations.related_chunk_ids),
                     "char_count": len(candidate.content),
                 },
                 confidence=0.82,
@@ -1444,8 +1632,13 @@ def build_knowledge_index_from_folder(
 
     previous_count = len(existing_indexes)
     final_indexes = [*kept_indexes, *entries]
+    report("syncing", len(source_files), len(source_files), 90.0, "正在写入全文索引和向量。")
     storage.save_all_indexes(final_indexes, user_id=user_id)
     _cleanup_unreferenced_generated_chunks(root, final_indexes)
+    report("quality", len(final_indexes), len(final_indexes), 97.0, "正在执行构建质量检查。")
+    quality_report = evaluate_knowledge_build_quality(final_indexes, root=root)
+    if not quality_report.passed:
+        warnings.append(f"知识库构建质量门禁未通过：{quality_report.error_count} 个错误、{quality_report.warning_count} 个警告，质量分 {quality_report.score:.1f}。")
     elapsed_seconds = time.monotonic() - started_at
     scale_stats = _build_scale_stats(
         root=root,
@@ -1457,6 +1650,7 @@ def build_knowledge_index_from_folder(
 
     updated = min(previous_count - deleted, len(entries))
     created = max(0, len(entries) - updated)
+    report("completed", len(final_indexes), len(final_indexes), 100.0, "知识库构建完成。")
 
     return KnowledgeIndexBuildResponse(
         root_path=str(root),
@@ -1475,5 +1669,6 @@ def build_knowledge_index_from_folder(
         parse_errors=parse_errors,
         warnings=warnings,
         scale_stats=scale_stats,
+        quality_report=quality_report,
         entries=entries,
     )

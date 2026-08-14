@@ -45,6 +45,7 @@ import {
   uploadKnowledgeFiles,
 } from "@/features/knowledge/api";
 import type {
+  KnowledgeBuildJob,
   KnowledgeImageModelCreateRequest,
   KnowledgeIndexEntry,
   KnowledgeIndexSearchHit,
@@ -216,6 +217,7 @@ export function KnowledgePage() {
   const [pageOffset, setPageOffset] = useState(0);
   const [imageModelDialogOpen, setImageModelDialogOpen] = useState(false);
   const [imageModelDraft, setImageModelDraft] = useState<string | null>(null);
+  const [buildJob, setBuildJob] = useState<KnowledgeBuildJob | null>(null);
   const [imageModelForm, setImageModelForm] =
     useState<KnowledgeImageModelCreateRequest>(EMPTY_IMAGE_MODEL_FORM);
 
@@ -397,7 +399,10 @@ export function KnowledgePage() {
   }
 
   const rebuild = useMutation({
-    mutationFn: () => buildKnowledgeIndex(undefined, knowledgeScope),
+    mutationFn: () => {
+      setBuildJob(null);
+      return buildKnowledgeIndex(undefined, knowledgeScope, setBuildJob);
+    },
     onSuccess: async (data) => {
       setSelected(null);
       setSearchResults(null);
@@ -597,7 +602,9 @@ export function KnowledgePage() {
     upload.isPending || processIncoming.isPending || rebuild.isPending;
   const totalIndexEntries = index.data?.total ?? indexEntries.length;
   const progressWidth = running
-    ? "68%"
+    ? rebuild.isPending && buildJob
+      ? `${Math.max(2, Math.min(100, buildJob.progress.percent))}%`
+      : "68%"
     : buildStats
       ? "100%"
       : `${Math.min(100, Math.max(8, totalIndexEntries * 8))}%`;
@@ -945,16 +952,22 @@ export function KnowledgePage() {
               </div>
               <div className="progress-text">
                 <span>
-                  {running
-                    ? "正在处理"
-                    : buildStats
-                      ? `已扫描 ${buildStats.scanned_files} 个文件`
-                      : `${totalIndexEntries} 个索引条目`}
+                  {rebuild.isPending && buildJob
+                    ? buildJob.progress.message || "正在构建知识库"
+                    : running
+                      ? "正在处理"
+                      : buildStats
+                        ? `已扫描 ${buildStats.scanned_files} 个文件`
+                        : `${totalIndexEntries} 个索引条目`}
                 </span>
                 <span>
-                  {buildStats
-                    ? `新增 ${buildStats.created} / 更新 ${buildStats.updated} / 复用 ${buildStats.reused ?? 0}`
-                    : `${processIncoming.data?.organization?.moved ?? 0} 个文件已整理`}
+                  {rebuild.isPending && buildJob
+                    ? buildJob.progress.total > 0
+                      ? `${buildJob.progress.current} / ${buildJob.progress.total} · ${Math.round(buildJob.progress.percent)}%`
+                      : `${Math.round(buildJob.progress.percent)}%`
+                    : buildStats
+                      ? `新增 ${buildStats.created} / 更新 ${buildStats.updated} / 复用 ${buildStats.reused ?? 0}`
+                      : `${processIncoming.data?.organization?.moved ?? 0} 个文件已整理`}
                 </span>
               </div>
               {buildStats?.scale_stats ? (
@@ -970,6 +983,37 @@ export function KnowledgePage() {
                       ? `解析 ${parserSummary}`
                       : `耗时 ${buildStats.scale_stats.elapsed_seconds ?? 0}s`}
                   </span>
+                </div>
+              ) : null}
+              {buildStats?.quality_report ? (
+                <div
+                  className={`upload-status-note${buildStats.quality_report.passed ? "" : "warning"}`}
+                >
+                  构建质量 {buildStats.quality_report.score.toFixed(1)} 分 ·
+                  错误 {buildStats.quality_report.error_count} · 警告{" "}
+                  {buildStats.quality_report.warning_count} · 正文覆盖率{" "}
+                  {Math.round(
+                    Number(
+                      buildStats.quality_report.metrics.body_coverage ?? 0,
+                    ) * 100,
+                  )}
+                  %
+                </div>
+              ) : null}
+              {buildStats?.quality_report?.issues.length ? (
+                <div className="upload-status-list">
+                  {buildStats.quality_report.issues.slice(0, 3).map((issue) => (
+                    <div
+                      key={`${issue.code}:${issue.index_id ?? issue.file_path ?? issue.message}`}
+                      className="upload-status-row pending"
+                    >
+                      <FileTextIcon />
+                      <span>
+                        {issue.file_path ? `${issue.file_path}：` : ""}
+                        {issue.message}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               ) : null}
               {buildStats?.warnings?.length ? (

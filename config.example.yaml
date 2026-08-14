@@ -1,4 +1,4 @@
-config_version: 12
+config_version: 14
 log_level: info
 models:
 - name: deepseek-v4-flash
@@ -38,6 +38,25 @@ models:
   supports_reasoning_effort: false
   supports_vision: true
 knowledge_image_model: qwen-qwen3.7-plus
+knowledge_retrieval:
+  default_search_mode: hybrid
+  content_max_chars: 100000
+  semantic_min_similarity: 0.08
+  embedding:
+    # Disabled by default: full-text + local feature-hash retrieval works offline.
+    # Enable and configure any LangChain-compatible Embeddings provider for real vectors.
+    enabled: false
+    use: langchain_openai:OpenAIEmbeddings
+    model: text-embedding-v4
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key: $DASHSCOPE_API_KEY
+    batch_size: 32
+  quality:
+    enabled: true
+    minimum_body_coverage: 0.98
+    minimum_leaf_chunk_chars: 80
+    maximum_chunk_chars: 3600
+    max_reported_issues: 200
 sandbox:
   use: deerflow.sandbox.local:LocalSandboxProvider
   allow_host_bash: false
