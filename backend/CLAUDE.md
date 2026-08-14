@@ -636,6 +636,13 @@ nginx inside the container.
 | **Stop** | `./scripts/serve.sh --stop`<br/>`make stop` | `./scripts/docker.sh stop`<br/>`make docker-stop` | `./scripts/deploy.sh down`<br/>`make down` |
 | **Restart** | `./scripts/serve.sh --restart [flags]` | `./scripts/docker.sh restart` | — |
 
+Dedicated Linux servers use `docker/docker-compose.server.yaml` only through
+`scripts/server-compose.sh` or `make server-*`. The stable host state root is
+`/srv/agent-base`; the public-knowledge bind target is
+`/srv/agent-base/public-knowledge` inside the Gateway and must remain outside
+the protected `/app` source tree. The wrapper persists and reuses auth secrets,
+so direct ad-hoc Compose invocations must not become a second deployment path.
+
 **Nginx routing**:
 - `/api/langgraph/*` → Gateway embedded runtime (8001), rewritten to `/api/*`
 - `/api/*` (other) → Gateway API (8001)

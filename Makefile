@@ -1,6 +1,6 @@
 # Government Project Declaration Agent - Unified Development Environment
 
-.PHONY: help config config-upgrade check ci ci-backend-light ci-backend-lint ci-frontend ci-docker-smoke live-smoke-chat live-smoke-subagent install setup doctor detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon stop up down clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway
+.PHONY: help config config-upgrade check ci ci-backend-light ci-backend-lint ci-frontend ci-docker-smoke live-smoke-chat live-smoke-subagent install setup doctor detect-thread-boundaries detect-blocking-io dev dev-daemon start start-daemon stop up down server-up server-down server-logs server-ps clean docker-init docker-start docker-stop docker-logs docker-logs-frontend docker-logs-gateway
 
 BASH ?= bash
 # Detect OS for Windows compatibility
@@ -45,6 +45,10 @@ help:
 	@echo "Docker Production Commands:"
 	@echo "  make up              - Build and start production Docker services (localhost:2026)"
 	@echo "  make down            - Stop and remove production Docker containers"
+	@echo "  make server-up       - Build and start the fixed-path Linux server stack"
+	@echo "  make server-down     - Stop the fixed-path Linux server stack"
+	@echo "  make server-logs     - View Linux server logs without manual env exports"
+	@echo "  make server-ps       - View Linux server container status"
 	@echo ""
 	@echo "Docker Development Commands:"
 	@echo "  make docker-init     - Pull the sandbox image"
@@ -184,3 +188,16 @@ up:
 # Stop and remove production containers
 down:
 	@$(RUN_WITH_GIT_BASH) ./scripts/deploy.sh down
+
+# Dedicated Linux server commands. The wrapper owns stable paths and secrets.
+server-up:
+	@$(BASH) ./scripts/server-compose.sh up -d --build
+
+server-down:
+	@$(BASH) ./scripts/server-compose.sh down
+
+server-logs:
+	@$(BASH) ./scripts/server-compose.sh logs --since 30m --tail 1000 --timestamps gateway frontend nginx
+
+server-ps:
+	@$(BASH) ./scripts/server-compose.sh ps

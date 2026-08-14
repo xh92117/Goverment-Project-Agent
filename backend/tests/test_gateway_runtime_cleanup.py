@@ -135,11 +135,35 @@ def test_production_compose_enables_fail_closed_multi_user_mode_by_default():
 
 
 def test_production_compose_persists_public_knowledge_separately():
-    content = _read("docker/docker-compose.yaml")
+    for path in ("docker/docker-compose.yaml", "docker/docker-compose.server.yaml"):
+        content = _read(path)
+        gateway_section = content.split("container_name: agent-base-gateway", 1)[1].split("env_file:", 1)[0]
+
+        assert ":/srv/agent-base/public-knowledge" in gateway_section, path
+        assert "AGENT_BASE_KNOWLEDGE_ROOT=/srv/agent-base/public-knowledge" in gateway_section, path
+        assert ":/app/backend/.agent-base/public-knowledge" not in gateway_section, path
+
+
+def test_server_compose_has_stable_host_path_defaults():
+    content = _read("docker/docker-compose.server.yaml")
     gateway_section = content.split("container_name: agent-base-gateway", 1)[1].split("env_file:", 1)[0]
 
-    assert "${AGENT_BASE_KNOWLEDGE_ROOT:-${AGENT_BASE_HOME}/public-knowledge}:/app/backend/.agent-base/public-knowledge" in gateway_section
-    assert "AGENT_BASE_KNOWLEDGE_ROOT=/app/backend/.agent-base/public-knowledge" in gateway_section
+    assert "${AGENT_BASE_CONFIG_PATH:-../config.yaml}:/app/backend/config.yaml" in gateway_section
+    assert "${AGENT_BASE_EXTENSIONS_CONFIG_PATH:-../extensions_config.json}:/app/backend/extensions_config.json:ro" in gateway_section
+    assert "${AGENT_BASE_HOME:-/srv/agent-base}:/app/backend/.agent-base" in gateway_section
+    assert "${AGENT_BASE_KNOWLEDGE_ROOT:-/srv/agent-base/public-knowledge}:/srv/agent-base/public-knowledge" in gateway_section
+    assert "${AGENT_BASE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock" in gateway_section
+
+
+def test_server_compose_wrapper_owns_paths_and_persistent_secrets():
+    wrapper = _read("scripts/server-compose.sh")
+
+    assert 'SERVER_STATE_ROOT="${AGENT_BASE_SERVER_STATE_ROOT:-/srv/agent-base}"' in wrapper
+    assert 'export AGENT_BASE_KNOWLEDGE_ROOT="${AGENT_BASE_KNOWLEDGE_ROOT:-$SERVER_STATE_ROOT/public-knowledge}"' in wrapper
+    assert '"$AGENT_BASE_HOME/.better-auth-secret"' in wrapper
+    assert '"$AGENT_BASE_HOME/.internal-auth-token"' in wrapper
+    assert '--env-file "$REPO_ROOT/.env"' in wrapper
+    assert '-f "$COMPOSE_FILE"' in wrapper
 
 
 def test_provisioner_compose_exposes_user_scoped_host_root():

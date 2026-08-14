@@ -71,6 +71,21 @@ Goverment-Project-Agent/
 
 启用内置用户系统后，前端提供 `/setup`（首位管理员初始化）、`/login`（登录）和 `/register`（普通用户注册）三条认证路由；工作台会在加载业务数据前验证会话，登录后在左侧栏显示当前账号与角色，退出时清除浏览器内的用户查询缓存。若后端未启用本地认证，认证状态接口返回 404，前端会自动保持原有的无登录直达工作台模式，无需修改现有使用方式。
 
+### 2.2 服务器 Docker 固定路径
+
+专用 Linux 服务器统一使用以下持久化契约：宿主机状态根目录为 `/srv/agent-base`，公共知识库为 `/srv/agent-base/public-knowledge`；Gateway 容器内的公共知识库也固定挂载到 `/srv/agent-base/public-knowledge`，不得放到受保护的 `/app` 源码树内。
+
+服务器的启动、停止、日志和状态查询统一使用包装命令。包装脚本会补齐固定路径，并从 `/srv/agent-base/.better-auth-secret` 和 `/srv/agent-base/.internal-auth-token` 恢复密钥，不依赖当前 Shell 是否曾导出环境变量：
+
+```bash
+make server-up
+make server-logs
+make server-ps
+make server-down
+```
+
+只有在有计划地迁移整套服务器数据时才设置 `AGENT_BASE_SERVER_STATE_ROOT`；日常部署不要逐次修改 `AGENT_BASE_HOME` 或 `AGENT_BASE_KNOWLEDGE_ROOT`。
+
 ## 3. 环境要求
 
 推荐使用 Windows 10/11 和 PowerShell。项目的本地一键启动脚本已按 Windows 环境优化。

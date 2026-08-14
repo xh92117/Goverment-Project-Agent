@@ -39,8 +39,13 @@ def _smoke_env(project_root: Path) -> dict[str, str]:
     env = os.environ.copy()
     smoke_home = project_root / ".agent-base" / "ci-smoke"
     env.setdefault("AGENT_BASE_HOME", str(smoke_home))
-    env.setdefault("AGENT_BASE_CONFIG_PATH", str(project_root / "configs" / "base.example.yaml"))
-    env.setdefault("AGENT_BASE_EXTENSIONS_CONFIG_PATH", str(project_root / "extensions_config.example.json"))
+    env.setdefault(
+        "AGENT_BASE_CONFIG_PATH", str(project_root / "configs" / "base.example.yaml")
+    )
+    env.setdefault(
+        "AGENT_BASE_EXTENSIONS_CONFIG_PATH",
+        str(project_root / "extensions_config.example.json"),
+    )
     env.setdefault("AGENT_BASE_DOCKER_SOCKET", "/var/run/docker.sock")
     env.setdefault("AGENT_BASE_REPO_ROOT", str(project_root))
     env.setdefault("BETTER_AUTH_SECRET", "ci-smoke-not-for-production")
@@ -71,7 +76,9 @@ def _temporary_env_files(project_root: Path):
             if path.exists():
                 continue
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("# Created temporarily by scripts/docker_smoke.py\n", encoding="utf-8")
+            path.write_text(
+                "# Created temporarily by scripts/docker_smoke.py\n", encoding="utf-8"
+            )
             created.append(path)
         yield
     finally:
@@ -98,7 +105,10 @@ def main() -> int:
     args = parser.parse_args()
 
     project_root = Path(__file__).resolve().parents[1]
-    compose_file = project_root / "docker" / "docker-compose.yaml"
+    compose_files = [
+        project_root / "docker" / "docker-compose.yaml",
+        project_root / "docker" / "docker-compose.server.yaml",
+    ]
     compose = _compose_command()
     if compose is None:
         print("Docker Compose is not available; install Docker to run the smoke test.")
@@ -107,15 +117,19 @@ def main() -> int:
     env = _smoke_env(project_root)
 
     with _temporary_env_files(project_root):
-        print("Validating Docker Compose configuration:")
-        config_status = _run([*compose, "-f", str(compose_file), "config"], cwd=project_root, env=env)
-        if config_status != 0:
-            return config_status
+        for compose_file in compose_files:
+            print(f"Validating Docker Compose configuration: {compose_file.name}")
+            config_status = _run(
+                [*compose, "-f", str(compose_file), "config"], cwd=project_root, env=env
+            )
+            if config_status != 0:
+                return config_status
 
         if not args.start:
             print("Docker Compose configuration smoke test passed.")
             return 0
 
+        compose_file = compose_files[0]
         project_name = "agent-base-ci-smoke"
         up_command = [
             *compose,
@@ -130,7 +144,15 @@ def main() -> int:
             "frontend",
             "gateway",
         ]
-        down_command = [*compose, "-p", project_name, "-f", str(compose_file), "down", "--remove-orphans"]
+        down_command = [
+            *compose,
+            "-p",
+            project_name,
+            "-f",
+            str(compose_file),
+            "down",
+            "--remove-orphans",
+        ]
 
         try:
             up_status = _run(up_command, cwd=project_root, env=env)

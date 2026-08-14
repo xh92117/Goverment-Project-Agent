@@ -50,6 +50,19 @@ AGENT_BASE_HOME/
 
 公共知识库不放在任何用户目录内，其根目录由 `AGENT_BASE_KNOWLEDGE_ROOT` 指定。生产环境应把整个 `AGENT_BASE_HOME` 挂载为持久卷，并限制为 Gateway/Provisioner 服务账号可读写；不要通过静态文件服务器暴露 `users/`。
 
+专用 Linux 服务器采用固定路径契约：
+
+```text
+宿主机运行状态：/srv/agent-base
+宿主机公共知识库：/srv/agent-base/public-knowledge
+Gateway 运行状态：/app/backend/.agent-base
+Gateway 公共知识库：/srv/agent-base/public-knowledge
+```
+
+公共知识库的容器路径必须位于 `/app` 源码树之外。所有服务器 Compose 操作统一通过
+`scripts/server-compose.sh`，或对应的 `make server-*` 命令执行；脚本会从持久化目录恢复
+认证密钥并提供稳定路径默认值，避免不同 Shell 会话产生不同挂载。
+
 ## 3. 公共与私有知识库
 
 知识库 API 的单库操作使用查询参数：
@@ -86,10 +99,10 @@ GET  /api/knowledge/index?scope=public
 ## 5. 生产部署步骤
 
 1. 为数据库、`AGENT_BASE_HOME`、公共知识库和配置文件创建备份。
-2. 配置足够长且唯一的 `BETTER_AUTH_SECRET` 与 `AGENT_BASE_INTERNAL_AUTH_TOKEN`。
+2. 首次运行 `make server-up`；包装脚本会生成并持久化足够长且唯一的 `BETTER_AUTH_SECRET` 与 `AGENT_BASE_INTERNAL_AUTH_TOKEN`，已有容器或密钥文件存在时会复用。
 3. 保持 `GATEWAY_ENABLE_LOCAL_AUTH=true` 和 `AGENT_BASE_STRICT_USER_CONTEXT=true`。
 4. 单节点可以使用 SQLite；多 Gateway 节点建议使用 PostgreSQL，并为所有节点挂载同一私有状态卷或对象存储方案。
-5. 设置 `AGENT_BASE_KNOWLEDGE_ROOT` 作为公共知识库目录。
+5. 保持服务器默认的 `/srv/agent-base/public-knowledge` 公共知识库路径；只有整盘迁移时才通过 `AGENT_BASE_SERVER_STATE_ROOT` 修改状态根目录。
 6. Kubernetes hostPath 模式设置 `USERS_HOST_PATH`；生产 Compose 已映射为 `${AGENT_BASE_HOME}/users`。PVC 模式会自动使用用户级 subPath。
 7. 启动服务，通过首次初始化页面创建管理员，再创建普通用户并分别进行冒烟测试。
 8. 用两个账号创建相同名称的项目和相同线程号，确认物理目录、检索结果、运行记录及日志互不可见。

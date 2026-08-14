@@ -32,7 +32,7 @@ services:
         NODE_IMAGE: ${NODE_IMAGE:-m.daocloud.io/docker.io/library/node:22-alpine}
     container_name: agent-base-frontend
     environment:
-      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET:-}
       - AGENT_BASE_INTERNAL_GATEWAY_BASE_URL=http://gateway:8001
       - AGENT_BASE_TRUSTED_ORIGINS=${AGENT_BASE_TRUSTED_ORIGINS:-${DEER_FLOW_TRUSTED_ORIGINS:-http://localhost:2026,http://localhost:3000}}
     env_file:
@@ -56,13 +56,13 @@ services:
     command: sh -c "cd /app/backend && PYTHONPATH=. uv run --no-sync uvicorn app.gateway.app:app --host 0.0.0.0 --port 8001 --workers ${GATEWAY_WORKERS:-4}"
     volumes:
       # Admin settings APIs persist model/parser selections to config.yaml.
-      - ${AGENT_BASE_CONFIG_PATH:-${DEER_FLOW_CONFIG_PATH}}:/app/backend/config.yaml
-      - ${AGENT_BASE_EXTENSIONS_CONFIG_PATH:-${DEER_FLOW_EXTENSIONS_CONFIG_PATH}}:/app/backend/extensions_config.json:ro
+      - ${AGENT_BASE_CONFIG_PATH:-../config.yaml}:/app/backend/config.yaml
+      - ${AGENT_BASE_EXTENSIONS_CONFIG_PATH:-../extensions_config.json}:/app/backend/extensions_config.json:ro
       - ../skills:/app/skills:ro
-      - ${AGENT_BASE_HOME}:/app/backend/.agent-base
-      # Host source resolves from .env; application uses the container target below.
-      - ${AGENT_BASE_KNOWLEDGE_ROOT:-${AGENT_BASE_HOME}/public-knowledge}:/app/backend/.agent-base/public-knowledge
-      - ${AGENT_BASE_DOCKER_SOCKET:-${DEER_FLOW_DOCKER_SOCKET}}:/var/run/docker.sock
+      - ${AGENT_BASE_HOME:-/srv/agent-base}:/app/backend/.agent-base
+      # Keep public knowledge outside /app, which is the protected source tree.
+      - ${AGENT_BASE_KNOWLEDGE_ROOT:-/srv/agent-base/public-knowledge}:/srv/agent-base/public-knowledge
+      - ${AGENT_BASE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
       - type: bind
         source: ${HOME:?HOME must be set}/.claude
         target: /root/.claude
@@ -83,15 +83,14 @@ services:
       - AGENT_BASE_CONFIG_PATH=/app/backend/config.yaml
       - AGENT_BASE_EXTENSIONS_CONFIG_PATH=/app/backend/extensions_config.json
       - AGENT_BASE_SKILLS_PATH=/app/skills
-      # This must be the container path, never /srv/agent-base/public-knowledge.
-      - AGENT_BASE_KNOWLEDGE_ROOT=/app/backend/.agent-base/public-knowledge
+      - AGENT_BASE_KNOWLEDGE_ROOT=/srv/agent-base/public-knowledge
       - AGENT_BASE_CHANNELS_LANGGRAPH_URL=${AGENT_BASE_CHANNELS_LANGGRAPH_URL:-${DEER_FLOW_CHANNELS_LANGGRAPH_URL:-http://gateway:8001/api}}
       - AGENT_BASE_CHANNELS_GATEWAY_URL=${AGENT_BASE_CHANNELS_GATEWAY_URL:-${DEER_FLOW_CHANNELS_GATEWAY_URL:-http://gateway:8001}}
-      - AGENT_BASE_INTERNAL_AUTH_TOKEN=${AGENT_BASE_INTERNAL_AUTH_TOKEN}
+      - AGENT_BASE_INTERNAL_AUTH_TOKEN=${AGENT_BASE_INTERNAL_AUTH_TOKEN:-}
       - GATEWAY_ENABLE_LOCAL_AUTH=${GATEWAY_ENABLE_LOCAL_AUTH:-true}
       - AGENT_BASE_STRICT_USER_CONTEXT=${AGENT_BASE_STRICT_USER_CONTEXT:-true}
-      - AGENT_BASE_HOST_BASE_DIR=${AGENT_BASE_HOME}
-      - AGENT_BASE_HOST_SKILLS_PATH=${AGENT_BASE_REPO_ROOT:-${DEER_FLOW_REPO_ROOT}}/skills
+      - AGENT_BASE_HOST_BASE_DIR=${AGENT_BASE_HOME:-/srv/agent-base}
+      - AGENT_BASE_HOST_SKILLS_PATH=${AGENT_BASE_REPO_ROOT:-/root/apps/government-project-agent}/skills
       - AGENT_BASE_SANDBOX_HOST=host.docker.internal
       - NO_PROXY=${NO_PROXY:-}${NO_PROXY:+,}localhost,127.0.0.1,::1,gateway,frontend,nginx,provisioner,host.docker.internal
       - no_proxy=${no_proxy:-}${no_proxy:+,}localhost,127.0.0.1,::1,gateway,frontend,nginx,provisioner,host.docker.internal
@@ -117,9 +116,9 @@ services:
     environment:
       - K8S_NAMESPACE=agent-base
       - SANDBOX_IMAGE=enterprise-public-cn-beijing.cr.volces.com/vefaas-public/all-in-one-sandbox:latest
-      - SKILLS_HOST_PATH=${AGENT_BASE_REPO_ROOT:-${DEER_FLOW_REPO_ROOT}}/skills
-      - THREADS_HOST_PATH=${AGENT_BASE_HOME}/threads
-      - USERS_HOST_PATH=${AGENT_BASE_HOME}/users
+      - SKILLS_HOST_PATH=${AGENT_BASE_REPO_ROOT:-/root/apps/government-project-agent}/skills
+      - THREADS_HOST_PATH=${AGENT_BASE_HOME:-/srv/agent-base}/threads
+      - USERS_HOST_PATH=${AGENT_BASE_HOME:-/srv/agent-base}/users
       - KUBECONFIG_PATH=/root/.kube/config
       - NODE_HOST=host.docker.internal
       - K8S_API_SERVER=https://host.docker.internal:26443
