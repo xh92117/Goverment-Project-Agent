@@ -101,9 +101,13 @@ class AppConfig(BaseModel):
     )
     token_usage: TokenUsageConfig = Field(default_factory=TokenUsageConfig, description="Token usage tracking configuration")
     models: list[ModelConfig] = Field(default_factory=list, description="Available models")
+    knowledge_model: str | None = Field(
+        default=None,
+        description="Model selected in the knowledge page for semantic chunking, metadata classification, and vision extraction when supported.",
+    )
     knowledge_image_model: str | None = Field(
         default=None,
-        description="Preferred supports_vision model for knowledge image extraction; falls back to the first vision-capable model.",
+        description="Legacy knowledge image model setting retained for API migration; new knowledge builds use knowledge_model.",
     )
     knowledge_retrieval: KnowledgeRetrievalConfig = Field(
         default_factory=KnowledgeRetrievalConfig,

@@ -89,6 +89,46 @@ def test_quality_gate_detects_empty_bodies_broken_assets_and_chunk_links(knowled
     assert {"empty_searchable_body", "broken_asset_uri", "invalid_chunk_group"} <= issue_codes
 
 
+def test_quality_gate_rejects_duplicate_chunk_file_paths(knowledge_root: Path) -> None:
+    knowledge_root.mkdir()
+    (knowledge_root / "source.md").write_text("# 源文件\n\n正文。", encoding="utf-8")
+    (knowledge_root / "shared.md").write_text("## 被覆盖的分块\n\n只剩最后一次写入的正文。", encoding="utf-8")
+    entries = [
+        _entry(
+            "idx_first",
+            "shared.md",
+            metadata={
+                "chunk_kind": "leaf_evidence",
+                "chunk_id": "chunk-1",
+                "chunk_group_id": "group-1",
+                "chunk_sequence": 1,
+                "chunk_count": 2,
+                "previous_chunk_id": None,
+                "next_chunk_id": "chunk-2",
+            },
+        ),
+        _entry(
+            "idx_second",
+            "shared.md",
+            metadata={
+                "chunk_kind": "leaf_evidence",
+                "chunk_id": "chunk-2",
+                "chunk_group_id": "group-1",
+                "chunk_sequence": 2,
+                "chunk_count": 2,
+                "previous_chunk_id": "chunk-1",
+                "next_chunk_id": None,
+            },
+        ),
+    ]
+
+    report = evaluate_knowledge_build_quality(entries, root=knowledge_root)
+
+    assert report.passed is False
+    assert report.metrics["duplicate_chunk_file_paths"] == 1
+    assert any(issue.code == "duplicate_chunk_file_path" and issue.severity == "error" for issue in report.issues)
+
+
 def test_background_build_job_persists_progress_and_result(knowledge_root: Path) -> None:
     source = knowledge_root / "通用资料" / "设备说明.md"
     source.parent.mkdir(parents=True)

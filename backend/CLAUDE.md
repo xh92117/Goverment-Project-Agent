@@ -697,19 +697,23 @@ it cannot be supplied only through the optional `documents` extra.
   Missing vision capability and provider/JSON failures must be returned through
   `KnowledgeIndexBuildResponse.warnings` so the existing frontend build status
   can notify the user without breaking text indexing.
-- `AppConfig.knowledge_image_model` may pin the extraction model. If unset,
-  select the first `supports_vision` model. Vision calls use temperature zero,
-  a system-level prompt-injection boundary, and a bounded/normalized image
-  payload. Model `non_evidence_image` judgments remain `needs_review`; only a
-  user review action may change them to `rejected`.
-- `GET/PUT /api/settings/knowledge-image-model` powers the knowledge-page model
-  status and selection dialog. The response exposes only models with
-  `supports_vision=true`; PUT must revalidate the requested name, persist the
-  root `knowledge_image_model` key, and hot-reload `AppConfig`. Both endpoints
-  use the existing admin-only settings boundary. The frontend may create a
-  model from that dialog through the existing `POST /api/models/config`
-  boundary with `supports_vision=true`, then select the returned model through
-  this PUT endpoint; do not introduce a second model-configuration store.
+- `AppConfig.knowledge_model` is the knowledge-page selection used for text
+  chunking, metadata classification, and image extraction. Image processing
+  proceeds only when that selected model has `supports_vision=true`; never
+  silently substitute the first vision model or the legacy image selection.
+  `knowledge_image_model` remains serialized only for older settings clients;
+  the legacy PUT endpoint also writes `knowledge_model`. Vision calls use
+  temperature zero, a system-level prompt-injection boundary, and a bounded/
+  normalized image payload. Model `non_evidence_image` judgments remain
+  `needs_review`; only a user review action may change them to `rejected`.
+- `GET/PUT /api/settings/knowledge-model` powers the knowledge-page build-model
+  status and selection dialog. The response exposes every configured chat
+  model, including text-only choices; PUT revalidates the name, persists the
+  root `knowledge_model` key, and hot-reloads `AppConfig`. The legacy
+  `/knowledge-image-model` endpoints remain migration-compatible. The frontend
+  may create a vision-capable model from the same dialog through the existing
+  `POST /api/models/config` boundary, then select it through the general model
+  endpoint; do not introduce a second model-configuration store.
 - `POST /api/knowledge/evidence/batch-review` accepts explicit evidence IDs and
   either `human_verified` or `rejected`. Human verification remains field-
   validated per item; return blocked items in `skipped` instead of failing or
@@ -761,10 +765,25 @@ unclassified or heading-free content; a short one-heading document may rely on
 its fully indexed document body to avoid a duplicate chunk.
 
 - Generated chunks store all contributing `source_anchors`. Adjacent short
-  generic siblings may be merged, but recognized business sections remain
-  separate. Oversized logical sections share a stable `chunk_group_id` and
-  carry `chunk_id`, `chunk_sequence`, `chunk_count`, previous/next IDs, and
-  related IDs in both front matter and index metadata.
+  siblings with the same structural/business context may be merged, including
+  recognized business sections. Oversized logical sections share a stable
+  `chunk_group_id` and carry `chunk_id`, `chunk_sequence`, `chunk_count`,
+  previous/next IDs, and related IDs in both front matter and index metadata.
+  Every chunk also carries document-order previous/next IDs. Repeated headings
+  and split sections must resolve to distinct files by `chunk_id`; matching a
+  source anchor alone is never sufficient because it can overwrite content.
+- When `knowledge_retrieval.chunking.enabled=true`,
+  `deerflow.knowledge.semantic_chunking` uses exactly `AppConfig.knowledge_model`
+  as a constrained knowledge-construction subagent. It receives numbered
+  original-text units and may return only contiguous ranges plus allow-listed
+  classification metadata; generator code reconstructs every chunk from the
+  original units and verifies complete ordered coverage, length, enum values,
+  and extractive metadata. Never hardcode Qwen or choose a default model. A
+  missing/invalid selection, provider error, timeout, malformed JSON, or invalid
+  range must preserve the current deterministic candidates. Invocation/parse
+  failures trip a per-build circuit breaker so later sections fall back without
+  repeating a failing remote call. Build stats expose model, calls, planned and
+  fallback sections, failures, and LLM-chunked chunk count.
 - `knowledge_search_index` exposes the group context. Supplying a returned
   `chunk_group_id` retrieves the complete group ordered by sequence.
 - `deerflow.knowledge.content_store` is the single path-validation boundary for
@@ -777,7 +796,9 @@ its fully indexed document body to avoid a duplicate chunk.
   accepts a LangChain-compatible `module:Class` provider. Real vectors are
   batched and tagged with a provider signature; a changed signature requires a
   rebuild. Disabled or failed providers use the deterministic offline feature-
-  hash fallback instead of failing text indexing.
+  hash fallback instead of failing text indexing. `embedding.max_input_chars`
+  bounds each provider input while the independent SQLite FTS body retains the
+  configured `content_max_chars`.
 - SQLite stores an `embedding_fingerprint` derived from stable semantic input.
   A sync may reuse a vector only when both that fingerprint and the configured
   provider signature match. Timestamps, parser cache state, source mtimes, and
@@ -795,8 +816,9 @@ its fully indexed document body to avoid a duplicate chunk.
   durable queue for worker failover.
 - Each build runs `deerflow.knowledge.quality` after synchronization and returns
   `quality_report`. Checks are format-neutral and cover indexed-body coverage,
-  empty/short/oversized leaf chunks, exact duplicates, canonical asset targets,
-  and chunk-group sequence/neighbor integrity. A failed threshold currently
+  empty/short/oversized leaf chunks, exact duplicates, duplicate chunk paths,
+  canonical asset targets, chunk-group sequence integrity, and document-order
+  neighbor integrity. A failed threshold currently
   produces `completed_with_warnings`; it is an advisory publish gate until index
   generation is moved behind a staged atomic swap.
 

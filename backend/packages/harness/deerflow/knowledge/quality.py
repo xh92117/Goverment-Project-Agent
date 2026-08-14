@@ -71,6 +71,22 @@ def evaluate_knowledge_build_quality(
     short_chunks = 0
     oversized_chunks = 0
     broken_assets = 0
+    duplicate_chunk_file_paths = 0
+
+    chunk_paths: dict[str, list[KnowledgeIndexEntry]] = defaultdict(list)
+    for entry in chunk_entries:
+        chunk_paths[entry.file_path].append(entry)
+    for file_path, path_entries in chunk_paths.items():
+        if len(path_entries) < 2:
+            continue
+        duplicate_chunk_file_paths += len(path_entries) - 1
+        for entry in path_entries[1:]:
+            add_issue(
+                "duplicate_chunk_file_path",
+                "error",
+                f"多个分块指向同一个文件，后写入的正文可能已覆盖前一分块：{file_path}",
+                entry=entry,
+            )
 
     duplicate_bodies: dict[str, list[KnowledgeIndexEntry]] = defaultdict(list)
     indexed_bodies = sqlite_knowledge_content_map(root)
@@ -138,6 +154,8 @@ def evaluate_knowledge_build_quality(
         for entry in duplicate_entries[1:]:
             add_issue("duplicate_chunk_body", "warning", "该分块正文与另一个分块完全重复。", entry=entry)
 
+    llm_chunked_chunks = sum(1 for entry in chunk_entries if entry.metadata.get("chunking_strategy") == "llm_semantic")
+
     groups: dict[str, list[KnowledgeIndexEntry]] = defaultdict(list)
     for entry in chunk_entries:
         group_id = str(entry.metadata.get("chunk_group_id") or "")
@@ -170,6 +188,32 @@ def evaluate_knowledge_build_quality(
                 chunk_group_id=group_id,
             )
 
+    source_chunks: dict[str, list[KnowledgeIndexEntry]] = defaultdict(list)
+    for entry in chunk_entries:
+        if entry.metadata.get("chunk_id"):
+            source_chunks[entry.source_file_path or entry.file_path].append(entry)
+
+    invalid_document_chunk_links = 0
+    for source_path, members in source_chunks.items():
+        members.sort(key=lambda item: int(item.metadata.get("chunk_order", 0)))
+        chunk_ids = [str(item.metadata.get("chunk_id") or "") for item in members]
+        valid = len(set(chunk_ids)) == len(chunk_ids) and all(chunk_ids)
+        for index, member in enumerate(members):
+            expected_previous = chunk_ids[index - 1] if index > 0 else None
+            expected_next = chunk_ids[index + 1] if index + 1 < len(chunk_ids) else None
+            if member.metadata.get("document_previous_chunk_id") != expected_previous:
+                valid = False
+            if member.metadata.get("document_next_chunk_id") != expected_next:
+                valid = False
+        if not valid:
+            invalid_document_chunk_links += 1
+            add_issue(
+                "invalid_document_chunk_links",
+                "error",
+                f"同一来源文档内的分块顺序链接不完整：{source_path}",
+                entry=members[0],
+            )
+
     nonempty_documents = len(document_entries) - empty_documents
     nonempty_chunks = len(chunk_entries) - empty_chunks
     document_coverage = nonempty_documents / len(document_entries) if document_entries else 1.0
@@ -199,8 +243,11 @@ def evaluate_knowledge_build_quality(
             "short_chunks": short_chunks,
             "oversized_chunks": oversized_chunks,
             "duplicate_chunk_bodies": duplicate_chunk_bodies,
+            "llm_chunked_chunks": llm_chunked_chunks,
+            "duplicate_chunk_file_paths": duplicate_chunk_file_paths,
             "chunk_groups": len(groups),
             "invalid_chunk_groups": invalid_chunk_groups,
+            "invalid_document_chunk_links": invalid_document_chunk_links,
             "broken_asset_references": broken_assets,
             "issues_truncated": error_count + warning_count > len(issues),
         },

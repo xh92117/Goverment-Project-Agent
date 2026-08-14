@@ -123,6 +123,10 @@ src/
   LLM-Wiki index files. Rebuilds use a background-job API, display persisted
   server progress, and surface body coverage, quality score, and representative
   quality issues when the build completes.
+- The knowledge-page header selects the chat model used for semantic chunking
+  and metadata classification. All configured models are eligible, so the UI
+  does not hardcode Qwen; text-only models remain valid for document builds,
+  while image evidence requires the selected model to support vision.
 - Proposal drafts are stored as Markdown artifacts and surfaced in the draft
   management page.
 - Both project-creation entry points require an explicit workspace-directory

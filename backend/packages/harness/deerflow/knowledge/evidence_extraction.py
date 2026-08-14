@@ -97,18 +97,17 @@ _MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 
 def _vision_model_config(app_config: Any) -> Any:
-    preferred_name = str(getattr(app_config, "knowledge_image_model", "") or "").strip()
+    preferred_name = str(getattr(app_config, "knowledge_model", "") or "").strip()
     if preferred_name:
         preferred = next((model for model in getattr(app_config, "models", []) if model.name == preferred_name), None)
         if preferred is None:
-            raise VisionModelUnavailableError(f"知识库图片模型 {preferred_name} 不存在，请检查 knowledge_image_model 配置。")
+            raise VisionModelUnavailableError(f"知识库模型 {preferred_name} 不存在，请在知识库界面重新选择。")
         if not bool(getattr(preferred, "supports_vision", False)):
-            raise VisionModelUnavailableError(f"知识库图片模型 {preferred_name} 未启用 supports_vision，图片尚未识别；请更换为支持视觉的模型后重新构建索引。")
+            raise VisionModelUnavailableError(f"知识库模型 {preferred_name} 未启用 supports_vision，文本仍可分块，但图片尚未识别；请在知识库界面更换为支持视觉的模型后重新构建索引。")
         return preferred
-    for model in getattr(app_config, "models", []):
-        if bool(getattr(model, "supports_vision", False)):
-            return model
-    raise VisionModelUnavailableError("当前没有配置 supports_vision=true 的多模态模型，图片尚未识别；请在模型设置中启用支持视觉的模型后重新构建索引。")
+    raise VisionModelUnavailableError(
+        "知识库界面尚未选择构建模型，图片尚未识别；请选择支持视觉的模型后重新构建索引。"
+    )
 
 
 def _prepare_model_image(data: bytes, mime_type: str) -> tuple[bytes, str]:

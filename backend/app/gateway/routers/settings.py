@@ -114,6 +114,39 @@ class KnowledgeImageModelSettingsUpdate(BaseModel):
         return value.strip() or None
 
 
+class KnowledgeModelOption(BaseModel):
+    """Configured chat model available to knowledge construction."""
+
+    name: str
+    display_name: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    supports_vision: bool = False
+
+
+class KnowledgeModelSettingsResponse(BaseModel):
+    """Knowledge-page model selection used by the next index build."""
+
+    selected_model: str | None = None
+    selected_model_valid: bool = False
+    models: list[KnowledgeModelOption] = Field(default_factory=list)
+
+
+class KnowledgeModelSettingsUpdate(BaseModel):
+    """Select or clear the model used for knowledge construction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_name: str | None = Field(default=None, max_length=200)
+
+    @field_validator("model_name")
+    @classmethod
+    def _strip_optional_model_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+
 class RuntimePathSettingsResponse(BaseModel):
     """Configured external storage paths persisted in the project .env file."""
 
@@ -208,6 +241,36 @@ def _knowledge_image_model_settings_response(data: dict) -> KnowledgeImageModelS
         selected_model=selected_model,
         selected_model_valid=bool(selected_model and any(model.name == selected_model for model in vision_models)),
         vision_models=vision_models,
+    )
+
+
+def _knowledge_model_settings_response(data: dict) -> KnowledgeModelSettingsResponse:
+    raw_models = data.get("models", [])
+    if not isinstance(raw_models, list):
+        raise HTTPException(status_code=500, detail="config.yaml models field must be a list")
+
+    models: list[KnowledgeModelOption] = []
+    for raw_model in raw_models:
+        if not isinstance(raw_model, dict):
+            continue
+        name = str(raw_model.get("name") or "").strip()
+        if not name:
+            continue
+        models.append(
+            KnowledgeModelOption(
+                name=name,
+                display_name=str(raw_model.get("display_name") or "").strip() or None,
+                provider=str(raw_model.get("provider") or "").strip() or None,
+                model=str(raw_model.get("model") or "").strip() or None,
+                supports_vision=bool(raw_model.get("supports_vision", False)),
+            )
+        )
+
+    selected_model = str(data.get("knowledge_model") or "").strip() or None
+    return KnowledgeModelSettingsResponse(
+        selected_model=selected_model,
+        selected_model_valid=bool(selected_model and any(model.name == selected_model for model in models)),
+        models=models,
     )
 
 
@@ -378,6 +441,42 @@ async def update_pdf_parser_settings(
 
 
 @router.get(
+    "/knowledge-model",
+    response_model=KnowledgeModelSettingsResponse,
+    summary="Get Knowledge Model Settings",
+    description="Read the model selected by the knowledge page and list all configured chat models.",
+)
+async def get_knowledge_model_settings(request: Request) -> KnowledgeModelSettingsResponse:
+    await _require_admin_user(request)
+    config_path = AppConfig.resolve_config_path()
+    return _knowledge_model_settings_response(_load_raw_config(config_path))
+
+
+@router.put(
+    "/knowledge-model",
+    response_model=KnowledgeModelSettingsResponse,
+    summary="Update Knowledge Model Settings",
+    description="Persist the model used by semantic chunking and metadata classification; vision extraction additionally requires supports_vision.",
+)
+async def update_knowledge_model_settings(
+    request: Request,
+    body: KnowledgeModelSettingsUpdate,
+) -> KnowledgeModelSettingsResponse:
+    await _require_admin_user(request)
+    config_path = AppConfig.resolve_config_path()
+    data = _load_raw_config(config_path)
+    settings = _knowledge_model_settings_response(data)
+
+    if body.model_name and not any(model.name == body.model_name for model in settings.models):
+        raise HTTPException(status_code=400, detail=f"Model {body.model_name} is unavailable.")
+
+    data["knowledge_model"] = body.model_name
+    _write_raw_config(config_path, data)
+    reload_app_config(str(config_path))
+    return _knowledge_model_settings_response(data)
+
+
+@router.get(
     "/knowledge-image-model",
     response_model=KnowledgeImageModelSettingsResponse,
     summary="Get Knowledge Image Model Settings",
@@ -411,6 +510,7 @@ async def update_knowledge_image_model_settings(
         )
 
     data["knowledge_image_model"] = body.model_name
+    data["knowledge_model"] = body.model_name
     _write_raw_config(config_path, data)
     reload_app_config(str(config_path))
     return _knowledge_image_model_settings_response(data)

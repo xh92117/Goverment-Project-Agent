@@ -86,18 +86,21 @@ the index. Capability/provider failures arrive in `index_build.warnings` and
 must remain visible in the existing upload card; do not add a separate image
 workspace for these warnings.
 
-The knowledge-page header owns the persistent image-model status entry. It
-opens a top-layer accessible dialog backed by
-`GET/PUT /api/settings/knowledge-image-model`; render only the vision-capable
-choices returned by that API. A valid selection shows its concrete model name
-with a green status dot; otherwise show `图片识别模型未配置`. Keep the header
-entry as a compact, single-line pill and ensure status modifier classes remain
-separate CSS tokens so its grid layout is actually applied. The same dialog
-also reuses the settings provider options and model form to POST a new model
-with `supports_vision=true`, then selects it through the dedicated setting API.
-A build warning for missing vision capability opens the same dialog, but must
-not block normal document indexing. Keep this entry in the header instead of
-restoring applicant or image-preview panels.
+The knowledge-page header owns the persistent knowledge-build model status
+entry. It opens a top-layer accessible dialog backed by
+`GET/PUT /api/settings/knowledge-model`; render every configured chat model and
+show whether each choice is text-only or supports images. The selected model is
+used by semantic chunking and metadata classification; do not special-case or
+hardcode Qwen in the UI. A valid selection shows its concrete model name with a
+green status dot; otherwise show `知识库模型未配置`. Keep the header entry as a
+compact, single-line pill and ensure status modifier classes remain separate
+CSS tokens so its grid layout is actually applied. The same dialog may reuse
+the settings provider options and model form to POST a new model with
+`supports_vision=true`, then select it through the general setting API. A
+text-only choice remains valid for document chunking but cannot process image
+evidence; a missing-vision warning opens the same dialog without blocking text
+indexing. Keep this entry in the header instead of restoring applicant or
+image-preview panels.
 
 The index-only rebuild action starts `POST /api/knowledge/index/build-jobs` and
 polls the returned job instead of holding one HTTP request open. Render the

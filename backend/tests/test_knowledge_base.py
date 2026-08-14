@@ -404,7 +404,7 @@ def test_build_knowledge_index_from_folder_creates_entries(tmp_path: Path) -> No
     chunk_parts = Path(section_entry.file_path).parts
     assert chunk_parts[0] == "申报书章节分块"
     assert entry.title in chunk_parts
-    assert Path(section_entry.file_path).name == "国内研究现状.md"
+    assert "国内研究现状" in Path(section_entry.file_path).name
     assert (tmp_path / "knowledge_base" / "index.json").exists()
     assert source.exists()
     assert response.parser_counts["text:.md"] == 1

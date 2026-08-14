@@ -225,7 +225,7 @@ def _entry_search_text(entry: KnowledgeIndexEntry, content_text: str = "") -> st
     return " ".join(value for value in values if value).lower()
 
 
-def _entry_embedding_text(entry: KnowledgeIndexEntry, content_text: str = "") -> str:
+def _entry_embedding_text(entry: KnowledgeIndexEntry, content_text: str = "", *, max_chars: int | None = None) -> str:
     """Return stable semantic input without parser/build bookkeeping fields."""
 
     semantic_metadata = {key: value for key, value in entry.metadata.items() if not key.startswith(("source_", "chunk_", "parser")) and key not in {"indexer_version", "char_count", "heading_path", "primary_section"}}
@@ -239,7 +239,8 @@ def _entry_embedding_text(entry: KnowledgeIndexEntry, content_text: str = "") ->
         json.dumps(semantic_metadata, ensure_ascii=False, sort_keys=True),
         recommended_text,
     ]
-    return " ".join(value for value in values if value).lower()
+    text = " ".join(value for value in values if value).lower()
+    return text[:max_chars] if max_chars is not None else text
 
 
 def _embedding_fingerprint(text: str) -> str:
@@ -311,12 +312,14 @@ def sync_sqlite_knowledge_index(entries: Iterable[KnowledgeIndexEntry], *, root:
     entry_list = list(entries)
     path = sqlite_knowledge_index_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    content_max_chars = get_app_config().knowledge_retrieval.content_max_chars
+    retrieval_config = get_app_config().knowledge_retrieval
+    content_max_chars = retrieval_config.content_max_chars
+    embedding_max_chars = retrieval_config.embedding.max_input_chars
     prepared: list[tuple[KnowledgeIndexEntry, str, str, str, str]] = []
     for entry in entry_list:
         content_text = load_index_entry_content(root, entry, max_chars=content_max_chars)
         search_text = _entry_search_text(entry, content_text)
-        embedding_text = _entry_embedding_text(entry, content_text)
+        embedding_text = _entry_embedding_text(entry, content_text, max_chars=embedding_max_chars)
         prepared.append(
             (
                 entry,

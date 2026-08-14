@@ -247,20 +247,21 @@ export interface KnowledgeFileSaveResult {
   saved: boolean;
 }
 
-export interface KnowledgeImageModelOption {
+export interface KnowledgeModelOption {
   name: string;
   display_name?: string | null;
   provider?: string | null;
   model?: string | null;
+  supports_vision: boolean;
 }
 
-export interface KnowledgeImageModelSettings {
+export interface KnowledgeModelSettings {
   selected_model?: string | null;
   selected_model_valid: boolean;
-  vision_models: KnowledgeImageModelOption[];
+  models: KnowledgeModelOption[];
 }
 
-export interface KnowledgeImageModelCreateRequest {
+export interface KnowledgeModelCreateRequest {
   model_name: string;
   provider: string;
   api_key?: string;
@@ -270,27 +271,22 @@ export interface KnowledgeImageModelCreateRequest {
 export type KnowledgeScope = "private" | "public";
 export type KnowledgeReadScope = "auto" | KnowledgeScope;
 
-export function loadKnowledgeImageModelSettings() {
-  return apiJson<KnowledgeImageModelSettings>(
-    "/api/settings/knowledge-image-model",
-  );
+export function loadKnowledgeModelSettings() {
+  return apiJson<KnowledgeModelSettings>("/api/settings/knowledge-model");
 }
 
-export function updateKnowledgeImageModelSettings(modelName: string) {
-  return apiJson<KnowledgeImageModelSettings>(
-    "/api/settings/knowledge-image-model",
-    {
-      method: "PUT",
-      body: jsonBody({ model_name: modelName }),
-    },
-  );
+export function updateKnowledgeModelSettings(modelName: string) {
+  return apiJson<KnowledgeModelSettings>("/api/settings/knowledge-model", {
+    method: "PUT",
+    body: jsonBody({ model_name: modelName }),
+  });
 }
 
 export function createKnowledgeImageModel(
-  model: KnowledgeImageModelCreateRequest,
+  model: KnowledgeModelCreateRequest,
 ) {
   return apiJson<{
-    models: Array<KnowledgeImageModelOption & { supports_vision?: boolean }>;
+    models: KnowledgeModelOption[];
   }>("/api/models/config", {
     method: "POST",
     body: jsonBody({ ...model, supports_vision: true }),

@@ -36,17 +36,17 @@ import {
   downloadKnowledgeFile,
   evaluateKnowledgeRecall,
   listKnowledgeIndexPage,
-  loadKnowledgeImageModelSettings,
+  loadKnowledgeModelSettings,
   processIncomingAndBuildKnowledgeIndex,
   readKnowledgeFile,
   saveKnowledgeFile,
   searchKnowledgeIndex,
-  updateKnowledgeImageModelSettings,
+  updateKnowledgeModelSettings,
   uploadKnowledgeFiles,
 } from "@/features/knowledge/api";
 import type {
   KnowledgeBuildJob,
-  KnowledgeImageModelCreateRequest,
+  KnowledgeModelCreateRequest,
   KnowledgeIndexEntry,
   KnowledgeIndexSearchHit,
   KnowledgeScope,
@@ -178,7 +178,7 @@ const DEFAULT_RECALL_EVAL_CASES = [
 
 const INDEX_PAGE_SIZE = 100;
 
-const EMPTY_IMAGE_MODEL_FORM: KnowledgeImageModelCreateRequest = {
+const EMPTY_IMAGE_MODEL_FORM: KnowledgeModelCreateRequest = {
   model_name: "",
   provider: "",
   url: "",
@@ -219,7 +219,7 @@ export function KnowledgePage() {
   const [imageModelDraft, setImageModelDraft] = useState<string | null>(null);
   const [buildJob, setBuildJob] = useState<KnowledgeBuildJob | null>(null);
   const [imageModelForm, setImageModelForm] =
-    useState<KnowledgeImageModelCreateRequest>(EMPTY_IMAGE_MODEL_FORM);
+    useState<KnowledgeModelCreateRequest>(EMPTY_IMAGE_MODEL_FORM);
 
   useEffect(() => {
     if (!authState.data || scopeInitializedRef.current) return;
@@ -245,8 +245,8 @@ export function KnowledgePage() {
   );
 
   const imageModelSettings = useQuery({
-    queryKey: ["knowledge-image-model-settings"],
-    queryFn: loadKnowledgeImageModelSettings,
+    queryKey: ["knowledge-model-settings"],
+    queryFn: loadKnowledgeModelSettings,
     enabled: canManagePublic,
   });
 
@@ -502,13 +502,12 @@ export function KnowledgePage() {
   });
 
   const saveImageModel = useMutation({
-    mutationFn: (modelName: string) =>
-      updateKnowledgeImageModelSettings(modelName),
+    mutationFn: (modelName: string) => updateKnowledgeModelSettings(modelName),
     onSuccess: async (settings) => {
       setImageModelDraft(settings.selected_model ?? null);
       setImageModelDialogOpen(false);
       await queryClient.invalidateQueries({
-        queryKey: ["knowledge-image-model-settings"],
+        queryKey: ["knowledge-model-settings"],
       });
     },
   });
@@ -534,7 +533,7 @@ export function KnowledgePage() {
       if (!createdModel?.name) {
         throw new Error("视觉模型已保存，但无法确认其配置名称。");
       }
-      return updateKnowledgeImageModelSettings(createdModel.name);
+      return updateKnowledgeModelSettings(createdModel.name);
     },
     onSuccess: async (settings) => {
       setImageModelForm(EMPTY_IMAGE_MODEL_FORM);
@@ -542,7 +541,7 @@ export function KnowledgePage() {
       setImageModelDialogOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({
-          queryKey: ["knowledge-image-model-settings"],
+          queryKey: ["knowledge-model-settings"],
         }),
         queryClient.invalidateQueries({ queryKey: ["managed-models"] }),
         queryClient.invalidateQueries({ queryKey: ["models"] }),
@@ -705,7 +704,7 @@ export function KnowledgePage() {
     .filter((entry) => entry.evidence_type === "non_evidence_image")
     .map((entry) => entry.evidence_id)
     .filter((evidenceId): evidenceId is string => Boolean(evidenceId));
-  const activeImageModel = imageModelSettings.data?.vision_models.find(
+  const activeImageModel = imageModelSettings.data?.models.find(
     (model) => model.name === imageModelSettings.data?.selected_model,
   );
   const imageModelStatus = imageModelSettings.isLoading
@@ -714,7 +713,7 @@ export function KnowledgePage() {
       ? "读取失败"
       : imageModelSettings.data?.selected_model_valid
         ? (activeImageModel?.display_name ?? activeImageModel?.name ?? "已配置")
-        : "图片识别模型未配置";
+        : "知识库模型未配置";
 
   function toggleTreeKey(key: string) {
     setExpandedTree((current) => {
@@ -766,8 +765,8 @@ export function KnowledgePage() {
                 className={`kb-image-model-status ${imageModelSettings.data?.selected_model_valid ? "configured" : "warning"}`}
                 aria-label={
                   imageModelSettings.data?.selected_model_valid
-                    ? `图片识别模型：${imageModelStatus}`
-                    : "图片识别模型未配置"
+                    ? `知识库构建模型：${imageModelStatus}`
+                    : "知识库模型未配置"
                 }
                 aria-haspopup="dialog"
                 aria-controls="knowledge-image-model-dialog"
@@ -786,7 +785,7 @@ export function KnowledgePage() {
                 />
                 <strong
                   className="kb-image-model-label"
-                  title={`图片识别模型：${imageModelStatus}`}
+                  title={`知识库构建模型：${imageModelStatus}`}
                 >
                   {imageModelStatus}
                 </strong>
@@ -1603,8 +1602,8 @@ export function KnowledgePage() {
           >
             <div className="modal-head">
               <div>
-                <h2 id="knowledge-image-model-title">知识库图片识别模型</h2>
-                <p>选择支持图片输入的模型，保存后用于知识库图片识别。</p>
+                <h2 id="knowledge-image-model-title">知识库构建模型</h2>
+                <p>所选模型用于语义分块和元数据归类；支持视觉时也用于图片识别。</p>
               </div>
               <button
                 type="button"
@@ -1628,8 +1627,8 @@ export function KnowledgePage() {
                     ? imageModelSettings.error.message
                     : "读取模型配置失败。"}
                 </div>
-              ) : imageModelSettings.data?.vision_models.length ? (
-                imageModelSettings.data.vision_models.map((model) => (
+              ) : imageModelSettings.data?.models.length ? (
+                imageModelSettings.data.models.map((model) => (
                   <label
                     key={model.name}
                     className={`knowledge-image-model-option${imageModelDraft === model.name ? "selected" : ""}`}
@@ -1650,20 +1649,20 @@ export function KnowledgePage() {
                         {preferredText(model.model, model.name)}
                       </small>
                     </span>
-                    <em>支持视觉</em>
+                    <em>{model.supports_vision ? "支持图片" : "仅文本"}</em>
                   </label>
                 ))
               ) : (
                 <div className="empty-state compact">
                   <ImageIcon size={24} />
-                  暂无视觉模型
+                  暂无可用模型
                 </div>
               )}
             </div>
 
             <div className="knowledge-image-model-create">
               <div className="knowledge-image-model-create-head">
-                <h3>新增视觉模型</h3>
+                <h3>新增支持图片的模型</h3>
               </div>
               <div className="form-grid add-model-form knowledge-image-model-form">
                 <select
@@ -1743,7 +1742,7 @@ export function KnowledgePage() {
                 <div className="kb-error knowledge-image-model-error">
                   {createImageModel.error instanceof Error
                     ? createImageModel.error.message
-                    : "新增视觉模型失败。"}
+                    : "新增知识库模型失败。"}
                 </div>
               ) : null}
             </div>
@@ -1778,7 +1777,7 @@ export function KnowledgePage() {
               <div className="kb-error knowledge-image-model-error">
                 {saveImageModel.error instanceof Error
                   ? saveImageModel.error.message
-                  : "保存图片识别模型失败。"}
+                  : "保存知识库模型失败。"}
               </div>
             ) : null}
           </div>

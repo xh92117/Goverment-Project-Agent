@@ -66,6 +66,7 @@ def knowledge_search_index_tool(
     valid_on: str | None = None,
     applicant_ids: list[str] | None = None,
     chunk_group_id: str | None = None,
+    chunk_id: str | None = None,
     limit: int = 10,
 ) -> str:
     """Search the LLM-Wiki knowledge-base index before reading source files.
@@ -89,11 +90,19 @@ def knowledge_search_index_tool(
         valid_on: Optional ISO date used to exclude expired or not-yet-effective sources.
         applicant_ids: Optional applicant-owner filter for applicant-specific evidence.
         chunk_group_id: Optional group id from a prior result; use it to retrieve every ordered block belonging to the same logical section.
+        chunk_id: Optional chunk id from a prior result; use it to retrieve one exact adjacent document block.
         limit: Maximum number of index results to return.
     """
     planned_variants = list(query_variants or [])
     if chunk_group_id and chunk_group_id not in planned_variants:
         planned_variants = [*planned_variants[:7], chunk_group_id]
+    if chunk_id and chunk_id not in planned_variants:
+        planned_variants = [*planned_variants[:7], chunk_id]
+    metadata_filters = {}
+    if chunk_group_id:
+        metadata_filters["chunk_group_id"] = chunk_group_id
+    if chunk_id:
+        metadata_filters["chunk_id"] = chunk_id
     request = KnowledgeIndexSearchRequest(
         query=query,
         query_variants=planned_variants,
@@ -107,7 +116,7 @@ def knowledge_search_index_tool(
         years=years,
         valid_on=valid_on,
         applicant_ids=applicant_ids,
-        metadata_filters={"chunk_group_id": chunk_group_id} if chunk_group_id else {},
+        metadata_filters=metadata_filters,
         search_mode=get_app_config().knowledge_retrieval.default_search_mode,
         limit=max(1, min(limit, 50)),
     )
@@ -144,17 +153,20 @@ def knowledge_search_index_tool(
             lines.append(f"source_anchor: {entry.source_anchor}")
         if entry.source_file_path:
             lines.append(f"source_path: {entry.source_file_path}")
-        if entry.metadata.get("chunk_group_id"):
-            lines.append(
-                "chunk_context: "
-                f"{entry.metadata.get('chunk_sequence', 1)}/{entry.metadata.get('chunk_count', 1)} "
-                f"group={entry.metadata['chunk_group_id']}"
-            )
+        chunk_count = int(entry.metadata.get("chunk_count") or 1)
+        if entry.metadata.get("chunk_group_id") and chunk_count > 1:
+            lines.append(f"chunk_context: {entry.metadata.get('chunk_sequence', 1)}/{entry.metadata.get('chunk_count', 1)} group={entry.metadata['chunk_group_id']}")
             if entry.metadata.get("previous_chunk_id"):
                 lines.append(f"previous_chunk_id: {entry.metadata['previous_chunk_id']}")
             if entry.metadata.get("next_chunk_id"):
                 lines.append(f"next_chunk_id: {entry.metadata['next_chunk_id']}")
             lines.append("context_hint: call knowledge_search_index again with this chunk_group_id to retrieve the complete ordered section")
+        if entry.metadata.get("document_previous_chunk_id"):
+            lines.append(f"document_previous_chunk_id: {entry.metadata['document_previous_chunk_id']}")
+        if entry.metadata.get("document_next_chunk_id"):
+            lines.append(f"document_next_chunk_id: {entry.metadata['document_next_chunk_id']}")
+        if entry.metadata.get("document_previous_chunk_id") or entry.metadata.get("document_next_chunk_id"):
+            lines.append("document_context_hint: call knowledge_search_index with chunk_id set to an adjacent document chunk id")
         if entry.domain:
             lines.append(f"domain: {entry.domain}")
         if entry.authority:

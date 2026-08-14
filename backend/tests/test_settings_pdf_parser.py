@@ -313,3 +313,80 @@ models:
 
     assert exc_info.value.status_code == 400
     assert "supports_vision" in str(exc_info.value.detail)
+
+
+def test_get_knowledge_model_settings_lists_all_models_and_reads_general_selection(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+knowledge_model: text-only
+knowledge_image_model: qwen-vl
+models:
+  - name: text-only
+    model: deepseek-chat
+    provider: deepseek
+    supports_vision: false
+  - name: qwen-vl
+    model: qwen-vl-max
+    provider: qwen
+    supports_vision: true
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_router.AppConfig, "resolve_config_path", staticmethod(lambda: config_path))
+
+    result = anyio.run(settings_router.get_knowledge_model_settings, _admin_request())
+
+    assert result.selected_model == "text-only"
+    assert result.selected_model_valid is True
+    assert [model.name for model in result.models] == ["text-only", "qwen-vl"]
+    assert result.models[0].supports_vision is False
+    assert result.models[1].supports_vision is True
+
+
+def test_get_knowledge_model_settings_does_not_treat_legacy_image_model_as_selection(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+knowledge_image_model: qwen-vl
+models:
+  - name: qwen-vl
+    supports_vision: true
+""".strip(),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_router.AppConfig, "resolve_config_path", lambda: config_path)
+    result = anyio.run(settings_router.get_knowledge_model_settings, _admin_request())
+
+    assert result.selected_model is None
+    assert result.selected_model_valid is False
+
+
+def test_update_knowledge_model_settings_accepts_selected_text_model(tmp_path, monkeypatch):
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+knowledge_model: null
+models:
+  - name: text-only
+    model: deepseek-chat
+    provider: deepseek
+    supports_vision: false
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings_router.AppConfig, "resolve_config_path", staticmethod(lambda: config_path))
+    reloaded_paths: list[str] = []
+    monkeypatch.setattr(settings_router, "reload_app_config", reloaded_paths.append)
+
+    result = anyio.run(
+        settings_router.update_knowledge_model_settings,
+        _admin_request(),
+        settings_router.KnowledgeModelSettingsUpdate(model_name="text-only"),
+    )
+
+    saved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    assert saved["knowledge_model"] == "text-only"
+    assert result.selected_model == "text-only"
+    assert result.selected_model_valid is True
+    assert reloaded_paths == [str(config_path)]

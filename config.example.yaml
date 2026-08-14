@@ -1,4 +1,4 @@
-config_version: 14
+config_version: 16
 log_level: info
 models:
 - name: deepseek-v4-flash
@@ -37,11 +37,26 @@ models:
   supports_thinking: false
   supports_reasoning_effort: false
   supports_vision: true
-knowledge_image_model: qwen-qwen3.7-plus
+# Managed by the knowledge-page model selector. When unset or unavailable,
+# knowledge construction falls back to deterministic rule chunking.
+knowledge_model: null
+# Legacy compatibility key for older image-model settings APIs.
+knowledge_image_model: null
 knowledge_retrieval:
   default_search_mode: hybrid
   content_max_chars: 100000
   semantic_min_similarity: 0.08
+  chunking:
+    # The model selected in the knowledge page plans boundaries and metadata.
+    # Any model failure falls back to rule chunking.
+    enabled: true
+    minimum_section_chars: 300
+    minimum_chunk_chars: 500
+    target_chunk_chars: 1600
+    maximum_chunk_chars: 3200
+    unit_max_chars: 600
+    max_prompt_chars: 24000
+    max_sections_per_call: 8
   embedding:
     # Disabled by default: full-text + local feature-hash retrieval works offline.
     # Enable and configure any LangChain-compatible Embeddings provider for real vectors.
@@ -51,6 +66,8 @@ knowledge_retrieval:
     base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
     api_key: $DASHSCOPE_API_KEY
     batch_size: 32
+    # Bounds each document sent to the embedding provider; full text remains in SQLite FTS.
+    max_input_chars: 8000
   quality:
     enabled: true
     minimum_body_coverage: 0.98
