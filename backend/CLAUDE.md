@@ -755,6 +755,10 @@ it cannot be supplied only through the optional `documents` extra.
   Markdown files are never rewritten. Missing verified evidence, no relevant
   selection, and model failures must surface as explicit HTTP errors rather
   than silently returning a Word file without the requested images.
+- Conversation Word export accepts the same validated `DocxFormatOptions`
+  fields through `word_format`. `build_conversation_docx()` must apply the
+  selected fonts, body size, line spacing, and heading start level while
+  preserving its verified-evidence embedding behavior.
 - Agent-facing code must request `verification_statuses=["human_verified"]`
   when it needs declaration-ready facts. Other statuses are discovery/review
   material only and must not be asserted as verified qualifications.
@@ -859,6 +863,9 @@ its fully indexed document body to avoid a duplicate chunk.
   prevents two writers from rebuilding one library at once. The executor is
   process-local even though snapshots are file-backed, so a horizontally scaled
   deployment needs a shared durable queue for worker or server-restart failover.
+  Register the static `GET /index/build-jobs` route before
+  `GET /index/{index_id}`; otherwise Starlette treats `build-jobs` as an index
+  ID and returns a misleading knowledge-entry 404.
 - Each build runs `deerflow.knowledge.quality` after synchronization and returns
   `quality_report`. Checks are format-neutral and cover indexed-body coverage,
   empty/short/oversized leaf chunks, exact duplicates, duplicate chunk paths,

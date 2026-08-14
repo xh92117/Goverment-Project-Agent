@@ -1,3 +1,4 @@
+import type { WordFormatOptions } from "@/features/exports/word-format";
 import { apiFetch, apiJson, jsonBody } from "@/shared/api/client";
 
 export interface ThreadRecord {
@@ -90,7 +91,10 @@ export function normalizeExecutionMode(value: unknown): ExecutionMode {
   return value === "deep" ? "deep" : "standard";
 }
 
-export function createThread(threadId: string, metadata: Record<string, unknown>) {
+export function createThread(
+  threadId: string,
+  metadata: Record<string, unknown>,
+) {
   return apiJson<ThreadRecord>("/api/threads", {
     method: "POST",
     body: jsonBody({
@@ -101,14 +105,20 @@ export function createThread(threadId: string, metadata: Record<string, unknown>
   });
 }
 
-export function searchThreads(limit = 80, metadata: Record<string, unknown> = {}) {
+export function searchThreads(
+  limit = 80,
+  metadata: Record<string, unknown> = {},
+) {
   return apiJson<ThreadRecord[]>("/api/threads/search", {
     method: "POST",
     body: jsonBody({ limit, offset: 0, metadata }),
   });
 }
 
-export function patchThread(threadId: string, metadata: Record<string, unknown>) {
+export function patchThread(
+  threadId: string,
+  metadata: Record<string, unknown>,
+) {
   return apiJson<ThreadRecord>(`/api/threads/${encodeURIComponent(threadId)}`, {
     method: "PATCH",
     body: jsonBody({ metadata }),
@@ -129,7 +139,9 @@ export function getThreadMessages(threadId: string) {
 }
 
 export function listRuns(threadId: string) {
-  return apiJson<RunRecord[]>(`/api/threads/${encodeURIComponent(threadId)}/runs`);
+  return apiJson<RunRecord[]>(
+    `/api/threads/${encodeURIComponent(threadId)}/runs`,
+  );
 }
 
 export function cancelRun(threadId: string, runId: string) {
@@ -151,28 +163,48 @@ export function tokenUsage(threadId: string) {
 export function uploadFile(threadId: string, file: File) {
   const form = new FormData();
   form.append("file", file);
-  return apiJson<unknown>(`/api/threads/${encodeURIComponent(threadId)}/uploads`, {
-    method: "POST",
-    body: form,
-  });
+  return apiJson<unknown>(
+    `/api/threads/${encodeURIComponent(threadId)}/uploads`,
+    {
+      method: "POST",
+      body: form,
+    },
+  );
 }
 
 export function uploadLimits(threadId: string) {
-  return apiJson<UploadLimits>(`/api/threads/${encodeURIComponent(threadId)}/uploads/limits`);
+  return apiJson<UploadLimits>(
+    `/api/threads/${encodeURIComponent(threadId)}/uploads/limits`,
+  );
 }
 
 export function uploadList(threadId: string) {
-  return apiJson<UploadList>(`/api/threads/${encodeURIComponent(threadId)}/uploads/list`);
+  return apiJson<UploadList>(
+    `/api/threads/${encodeURIComponent(threadId)}/uploads/list`,
+  );
 }
 
 export async function exportConversationDocx(input: {
   title: string;
   messages: Array<{ role: "user" | "assistant"; content: string }>;
+  wordFormat?: WordFormatOptions;
 }) {
   const response = await apiFetch("/api/exports/conversation.docx", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: jsonBody(input),
+    body: jsonBody({
+      title: input.title,
+      messages: input.messages,
+      word_format: input.wordFormat
+        ? {
+            body_font: input.wordFormat.bodyFont,
+            body_font_size_pt: input.wordFormat.bodyFontSizePt,
+            line_spacing: input.wordFormat.lineSpacing,
+            heading_font: input.wordFormat.headingFont,
+            heading_start_level: input.wordFormat.headingStartLevel,
+          }
+        : undefined,
+    }),
   });
   if (!response.ok) {
     throw new Error(`导出失败：HTTP ${response.status}`);
@@ -206,12 +238,17 @@ function compactText(value: unknown, maxLength = 120): string | undefined {
     try {
       text = JSON.stringify(value);
     } catch {
-      text = value instanceof Error ? value.message : Object.prototype.toString.call(value);
+      text =
+        value instanceof Error
+          ? value.message
+          : Object.prototype.toString.call(value);
     }
   }
   const normalized = text.replace(/\s+/g, " ").trim();
   if (!normalized) return undefined;
-  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}...` : normalized;
+  return normalized.length > maxLength
+    ? `${normalized.slice(0, maxLength - 1)}...`
+    : normalized;
 }
 
 export function extractMessageContent(payload: unknown): string | null {
@@ -219,10 +256,7 @@ export function extractMessageContent(payload: unknown): string | null {
   const message = payload[0];
   if (!message || typeof message !== "object") return null;
   const record = message as Record<string, unknown>;
-  const nested =
-    asRecord(record.kwargs) ??
-    asRecord(record.data) ??
-    null;
+  const nested = asRecord(record.kwargs) ?? asRecord(record.data) ?? null;
 
   const rawType =
     asString(record.type) ??
@@ -245,7 +279,9 @@ export function extractMessageContent(payload: unknown): string | null {
       .map((block): string => {
         if (typeof block === "string") return block;
         const recordBlock = asRecord(block);
-        return asString(recordBlock?.text) ?? asString(recordBlock?.content) ?? "";
+        return (
+          asString(recordBlock?.text) ?? asString(recordBlock?.content) ?? ""
+        );
       })
       .join("");
     if (!text.trim()) return null;
@@ -298,14 +334,23 @@ function toolCallDetail(toolName: string | undefined, args: unknown) {
   }
   if (toolName === "web_search") {
     const engine = asString(record?.engine);
-    return compactText(engine ? `关键词：${primary} · 引擎：${engine}` : `关键词：${primary}`, 150);
+    return compactText(
+      engine ? `关键词：${primary} · 引擎：${engine}` : `关键词：${primary}`,
+      150,
+    );
   }
-  if (toolName === "knowledge_search" || toolName === "knowledge_search_index") return compactText(`关键词：${primary}`, 150);
+  if (toolName === "knowledge_search" || toolName === "knowledge_search_index")
+    return compactText(`关键词：${primary}`, 150);
   return compactText(primary, 150);
 }
 
-function toolResultDetail(toolName: string | undefined, content: unknown, status: StreamActionStatus) {
-  if (status === "error") return compactText(content, 150) ?? "工具执行返回错误";
+function toolResultDetail(
+  toolName: string | undefined,
+  content: unknown,
+  status: StreamActionStatus,
+) {
+  if (status === "error")
+    return compactText(content, 150) ?? "工具执行返回错误";
   if (toolName === "web_search") return "已返回网页检索结果";
   if (toolName === "web_fetch") return "已读取网页内容";
   if (toolName === "web_extract") return "已提取网页字段";
@@ -320,10 +365,15 @@ function getNestedRecord(record: Record<string, unknown>) {
   return asRecord(record.kwargs) ?? asRecord(record.data) ?? null;
 }
 
-function extractToolCallsFromRecord(record: Record<string, unknown>): StreamAction[] {
+function extractToolCallsFromRecord(
+  record: Record<string, unknown>,
+): StreamAction[] {
   const nested = getNestedRecord(record);
   const actions: StreamAction[] = [];
-  const candidates = [record, nested].filter(Boolean) as Record<string, unknown>[];
+  const candidates = [record, nested].filter(Boolean) as Record<
+    string,
+    unknown
+  >[];
 
   candidates.forEach((candidate) => {
     const toolCalls = candidate.tool_calls ?? candidate.tool_call_chunks;
@@ -333,9 +383,7 @@ function extractToolCallsFromRecord(record: Record<string, unknown>): StreamActi
       if (!call) return;
       const fn = asRecord(call.function);
       const name =
-        asString(call.name) ??
-        asString(call.tool_name) ??
-        asString(fn?.name);
+        asString(call.name) ?? asString(call.tool_name) ?? asString(fn?.name);
       const callId =
         asString(call.id) ??
         asString(call.tool_call_id) ??
@@ -356,7 +404,9 @@ function extractToolCallsFromRecord(record: Record<string, unknown>): StreamActi
   return actions;
 }
 
-function extractToolResultFromRecord(record: Record<string, unknown>): StreamAction | null {
+function extractToolResultFromRecord(
+  record: Record<string, unknown>,
+): StreamAction | null {
   const nested = getNestedRecord(record);
   const rawType =
     asString(record.type) ??
@@ -365,8 +415,10 @@ function extractToolResultFromRecord(record: Record<string, unknown>): StreamAct
     asString(nested?.type) ??
     asString(nested?.role);
   const type = rawType?.toLowerCase() ?? "";
-  const toolCallId = asString(record.tool_call_id) ?? asString(nested?.tool_call_id);
-  if (!toolCallId || (!type.includes("tool") && !("tool_call_id" in record))) return null;
+  const toolCallId =
+    asString(record.tool_call_id) ?? asString(nested?.tool_call_id);
+  if (!toolCallId || (!type.includes("tool") && !("tool_call_id" in record)))
+    return null;
   const toolName = asString(record.name) ?? asString(nested?.name) ?? undefined;
   const content = "content" in record ? record.content : nested?.content;
   const contentText = compactText(content, 180);
@@ -385,7 +437,10 @@ function extractToolResultFromRecord(record: Record<string, unknown>): StreamAct
   };
 }
 
-function extractStatusFromRecord(record: Record<string, unknown>, eventType?: string): StreamAction | null {
+function extractStatusFromRecord(
+  record: Record<string, unknown>,
+  eventType?: string,
+): StreamAction | null {
   const kind =
     asString(record.type) ??
     asString(record.event) ??
@@ -398,12 +453,13 @@ function extractStatusFromRecord(record: Record<string, unknown>, eventType?: st
     asString(record.status);
   const isStatusEvent = eventType === "custom" || eventType === "error";
   if (!message || (!isStatusEvent && !kind)) return null;
-  const status: StreamActionStatus = eventType === "error" ? "error" : "running";
+  const status: StreamActionStatus =
+    eventType === "error" ? "error" : "running";
   const detail =
     status === "error"
       ? compactText(message, 180)
       : asString(record.detail) && asString(record.detail) !== message
-        ? asString(record.detail) ?? undefined
+        ? (asString(record.detail) ?? undefined)
         : undefined;
   return {
     id: `status:${kind ?? eventType ?? "event"}:${message.slice(0, 48)}`,
@@ -417,10 +473,17 @@ function extractStatusFromRecord(record: Record<string, unknown>, eventType?: st
 function extractStreamError(payload: unknown): string | null {
   const record = asRecord(payload);
   if (!record) return null;
-  return asString(record.message) ?? asString(record.error) ?? asString(record.detail);
+  return (
+    asString(record.message) ??
+    asString(record.error) ??
+    asString(record.detail)
+  );
 }
 
-export function extractStreamActions(payload: unknown, eventType?: string): StreamAction[] {
+export function extractStreamActions(
+  payload: unknown,
+  eventType?: string,
+): StreamAction[] {
   const actions: StreamAction[] = [];
   const seen = new Set<string>();
 
@@ -443,7 +506,8 @@ export function extractStreamActions(payload: unknown, eventType?: string): Stre
 
     extractToolCallsFromRecord(record).forEach(add);
     add(extractToolResultFromRecord(record));
-    if (eventType === "custom" || eventType === "error") add(extractStatusFromRecord(record, eventType));
+    if (eventType === "custom" || eventType === "error")
+      add(extractStatusFromRecord(record, eventType));
 
     Object.values(record).forEach((child) => {
       if (child && typeof child === "object") walk(child, depth + 1);
@@ -497,19 +561,22 @@ export async function streamRun({
   onRunId?: (runId: string) => void;
   onAction?: (action: StreamAction) => void;
 }) {
-  const response = await apiFetch(`/api/threads/${encodeURIComponent(threadId)}/runs/stream`, {
-    method: "POST",
-    signal,
-    headers: { "Content-Type": "application/json" },
-    body: jsonBody({
-      assistant_id: GOVERNMENT_PROJECT_ASSISTANT_ID,
-      input: { messages: [{ type: "human", content }] },
-      context: withGovernmentProjectRuntimeContext(context),
-      stream_mode: ["messages", "updates", "custom"],
-      if_not_exists: "create",
-      on_disconnect: "continue",
-    }),
-  });
+  const response = await apiFetch(
+    `/api/threads/${encodeURIComponent(threadId)}/runs/stream`,
+    {
+      method: "POST",
+      signal,
+      headers: { "Content-Type": "application/json" },
+      body: jsonBody({
+        assistant_id: GOVERNMENT_PROJECT_ASSISTANT_ID,
+        input: { messages: [{ type: "human", content }] },
+        context: withGovernmentProjectRuntimeContext(context),
+        stream_mode: ["messages", "updates", "custom"],
+        if_not_exists: "create",
+        on_disconnect: "continue",
+      }),
+    },
+  );
 
   if (!response.ok || !response.body) {
     throw new Error(`流式请求失败：HTTP ${response.status}`);

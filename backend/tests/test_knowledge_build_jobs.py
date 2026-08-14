@@ -208,6 +208,10 @@ def test_background_build_api_returns_accepted_job_and_pollable_result(knowledge
     app.include_router(knowledge_router.router)
 
     with TestClient(app) as client:
+        listed = client.get("/api/knowledge/index/build-jobs")
+        assert listed.status_code == 200
+        assert listed.json() == []
+
         started = client.post(
             "/api/knowledge/index/build-jobs",
             json={"folder_path": "通用资料"},

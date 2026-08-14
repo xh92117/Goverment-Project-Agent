@@ -114,6 +114,14 @@ error/warning totals, and representative issues. Treat
 `completed_with_warnings` as a successful response with visible diagnostics;
 only `failed` is a build error.
 
+The standalone chat header's export action must open the Word-format dialog
+before calling `/api/exports/conversation.docx`. Keep body font/size, line
+spacing, heading font, and heading start level visible by default, pass the
+selected values as `word_format`, and disable closing controls while the DOCX
+request is pending. Reuse the shared defaults in
+`features/exports/word-format.ts` so project-file and conversation exports do
+not drift.
+
 The existing knowledge-tree toolbar conditionally exposes batch evidence review
 actions, without restoring the removed image preview section. Only visible
 `needs_review` evidence whose index metadata has `extraction_status=completed`

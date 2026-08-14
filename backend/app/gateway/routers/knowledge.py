@@ -603,6 +603,23 @@ async def create_index_entry(
 
 
 @router.get(
+    "/index/build-jobs",
+    response_model=list[KnowledgeBuildJob],
+    response_model_exclude_none=True,
+    summary="List Knowledge Index Build Jobs",
+)
+async def list_build_jobs(
+    request: Request,
+    scope: KnowledgeScope = Query(default="private"),
+    limit: int = Query(default=20, ge=1, le=50),
+) -> list[KnowledgeBuildJob]:
+    """List jobs before the dynamic index-id route can match `build-jobs`."""
+
+    await _authorize_public_read(scope, request)
+    return get_knowledge_build_job_manager().list(user_id=_scope_user_id(scope), limit=limit)
+
+
+@router.get(
     "/index/{index_id}",
     response_model=KnowledgeIndexEntry,
     response_model_exclude_none=True,
@@ -736,21 +753,6 @@ async def start_build_job(
         return get_knowledge_build_job_manager().submit(body, user_id=_scope_user_id(scope))
     except KnowledgeBuildJobConflictError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@router.get(
-    "/index/build-jobs",
-    response_model=list[KnowledgeBuildJob],
-    response_model_exclude_none=True,
-    summary="List Knowledge Index Build Jobs",
-)
-async def list_build_jobs(
-    request: Request,
-    scope: KnowledgeScope = Query(default="private"),
-    limit: int = Query(default=20, ge=1, le=50),
-) -> list[KnowledgeBuildJob]:
-    await _authorize_public_read(scope, request)
-    return get_knowledge_build_job_manager().list(user_id=_scope_user_id(scope), limit=limit)
 
 
 @router.get(

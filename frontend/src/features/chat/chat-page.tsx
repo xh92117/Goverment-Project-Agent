@@ -3,13 +3,16 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BookOpenIcon,
+  ChevronDownIcon,
   DownloadIcon,
   FileTextIcon,
   Loader2Icon,
   PaperclipIcon,
+  RotateCcwIcon,
   SendIcon,
   Settings2Icon,
   SquareIcon,
+  XIcon,
 } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -31,15 +34,24 @@ import { ExecutionModeToggle } from "@/features/chat/execution-mode-toggle";
 import { normalizeMessages } from "@/features/chat/message-utils";
 import type { LocalMessage } from "@/features/chat/message-utils";
 import { MessageList } from "@/features/chat/message-view";
-import { summarizeThreadTitle, UNTITLED_DIRECT_THREAD_TITLE } from "@/features/chat/thread-title";
+import {
+  summarizeThreadTitle,
+  UNTITLED_DIRECT_THREAD_TITLE,
+} from "@/features/chat/thread-title";
 import { useExecutionMode } from "@/features/chat/use-execution-mode";
+import {
+  DEFAULT_WORD_FORMAT,
+  WORD_FONT_OPTIONS,
+} from "@/features/exports/word-format";
+import type { WordFormatOptions } from "@/features/exports/word-format";
 import { loadModels } from "@/features/settings/api";
 import { createId } from "@/shared/lib/ids";
 
 const quickPrompts = [
   {
     title: "检索政策指南",
-    prompt: "请帮我检索并总结当前项目相关的申报政策指南，重点列出申报条件、材料清单和时间节点。",
+    prompt:
+      "请帮我检索并总结当前项目相关的申报政策指南，重点列出申报条件、材料清单和时间节点。",
     icon: BookOpenIcon,
   },
   {
@@ -49,7 +61,8 @@ const quickPrompts = [
   },
   {
     title: "配置智能体",
-    prompt: "请检查当前申报助手配置是否完整，并说明需要补充哪些模型、技能或 MCP 服务。",
+    prompt:
+      "请检查当前申报助手配置是否完整，并说明需要补充哪些模型、技能或 MCP 服务。",
     icon: Settings2Icon,
   },
 ];
@@ -72,6 +85,11 @@ export function ChatPage() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<LocalMessage[]>([]);
   const [selectedModel, setSelectedModel] = useState("");
+  const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [wordFormat, setWordFormat] = useState<WordFormatOptions>({
+    ...DEFAULT_WORD_FORMAT,
+  });
+  const [wordFormatCustomized, setWordFormatCustomized] = useState(false);
   const [executionMode, setExecutionMode] = useExecutionMode();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -109,24 +127,36 @@ export function ChatPage() {
   const isRunning = activeRun?.status === "running";
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView({
+      block: "end",
+      behavior: "smooth",
+    });
   }, [messages, isRunning]);
 
   async function ensureThread(titleSeed?: string) {
     if (threadId) return threadId;
     const nextThreadId = createId();
     await createThread(nextThreadId, {
-      title: titleSeed ? summarizeThreadTitle(titleSeed) : UNTITLED_DIRECT_THREAD_TITLE,
+      title: titleSeed
+        ? summarizeThreadTitle(titleSeed)
+        : UNTITLED_DIRECT_THREAD_TITLE,
       source: "chat-page",
       project_type: "government-project-declaration",
     });
     setThreadId(nextThreadId);
-    window.history.replaceState(null, "", `/workspace/chat?thread=${encodeURIComponent(nextThreadId)}`);
+    window.history.replaceState(
+      null,
+      "",
+      `/workspace/chat?thread=${encodeURIComponent(nextThreadId)}`,
+    );
     await queryClient.invalidateQueries({ queryKey: ["threads"] });
     return nextThreadId;
   }
 
-  function renameThreadFromFirstPrompt(currentThreadId: string, content: string) {
+  function renameThreadFromFirstPrompt(
+    currentThreadId: string,
+    content: string,
+  ) {
     const title = summarizeThreadTitle(content);
     void patchThread(currentThreadId, { title, auto_title: true })
       .then(() => queryClient.invalidateQueries({ queryKey: ["threads"] }))
@@ -148,13 +178,16 @@ export function ChatPage() {
       context: {
         model_name: selectedModel || undefined,
         output_language: "zh-CN",
-        output_style: "zh-CN government-project markdown, professional, no emoji",
+        output_style:
+          "zh-CN government-project markdown, professional, no emoji",
         execution_mode: executionMode,
         workspace: "standalone-chat",
         ...(runContext ?? {}),
       },
       onComplete: async () => {
-        await queryClient.invalidateQueries({ queryKey: ["thread-messages", currentThreadId] });
+        await queryClient.invalidateQueries({
+          queryKey: ["thread-messages", currentThreadId],
+        });
         await queryClient.invalidateQueries({ queryKey: ["threads"] });
       },
     });
@@ -177,7 +210,13 @@ export function ChatPage() {
     setMessages(nextMessages);
 
     if (shouldRename) renameThreadFromFirstPrompt(currentThreadId, content);
-    startAssistantRun(currentThreadId, content, assistantId, nextMessages, continuationRunContext(content, messages));
+    startAssistantRun(
+      currentThreadId,
+      content,
+      assistantId,
+      nextMessages,
+      continuationRunContext(content, messages),
+    );
   }
 
   async function regenerateAnswer(prompt: string, assistantIds: string[]) {
@@ -192,14 +231,23 @@ export function ChatPage() {
       inserted = true;
       return [{ id: assistantId, role: "assistant" as const, content: "" }];
     });
-    if (!inserted) nextMessages.push({ id: assistantId, role: "assistant", content: "" });
+    if (!inserted)
+      nextMessages.push({ id: assistantId, role: "assistant", content: "" });
     setMessages(nextMessages);
-    startAssistantRun(currentThreadId, content, assistantId, nextMessages, continuationRunContext(content, messages));
+    startAssistantRun(
+      currentThreadId,
+      content,
+      assistantId,
+      nextMessages,
+      continuationRunContext(content, messages),
+    );
   }
 
   function deleteMessages(messageIds: string[]) {
     const deleted = new Set(messageIds);
-    setMessages((current) => current.filter((message) => !deleted.has(message.id)));
+    setMessages((current) =>
+      current.filter((message) => !deleted.has(message.id)),
+    );
   }
 
   async function stopRun() {
@@ -211,17 +259,42 @@ export function ChatPage() {
       const currentThreadId = await ensureThread(`附件：${file.name}`);
       return uploadFile(currentThreadId, file);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["thread-messages", threadId] }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: ["thread-messages", threadId],
+      }),
   });
 
   const exportDocx = useMutation({
-    mutationFn: () =>
+    mutationFn: (format: WordFormatOptions) =>
       exportConversationDocx({
         title: "智策对话记录",
-        messages: messages.map((message) => ({ role: message.role, content: message.content })),
+        messages: messages.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+        wordFormat: format,
       }),
-    onSuccess: (blob) => downloadBlob(blob, "智策对话记录.docx"),
+    onSuccess: (blob) => {
+      downloadBlob(blob, "智策对话记录.docx");
+      setExportDialogOpen(false);
+    },
   });
+
+  function updateWordFormat<Key extends keyof WordFormatOptions>(
+    key: Key,
+    value: WordFormatOptions[Key],
+  ) {
+    setWordFormat((current) => ({ ...current, [key]: value }));
+    setWordFormatCustomized(true);
+  }
+
+  function openExportDialog() {
+    exportDocx.reset();
+    setWordFormat({ ...DEFAULT_WORD_FORMAT });
+    setWordFormatCustomized(false);
+    setExportDialogOpen(true);
+  }
 
   const headerTags = useMemo(
     () => [
@@ -243,7 +316,12 @@ export function ChatPage() {
               {tag}
             </span>
           ))}
-          <button type="button" className="ghost-btn" onClick={() => exportDocx.mutate()} disabled={!messages.length}>
+          <button
+            type="button"
+            className="ghost-btn"
+            onClick={openExportDialog}
+            disabled={!messages.length}
+          >
             <DownloadIcon size={15} />
             导出
           </button>
@@ -298,7 +376,11 @@ export function ChatPage() {
             />
             <div className="composer-bar">
               <div className="cb-left">
-                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={upload.isPending}>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={upload.isPending}
+                >
                   <PaperclipIcon size={15} />
                   {upload.isPending ? "上传中" : "附件"}
                 </button>
@@ -314,7 +396,10 @@ export function ChatPage() {
                 />
               </div>
               <div className="cb-right">
-                <select value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
+                <select
+                  value={selectedModel}
+                  onChange={(event) => setSelectedModel(event.target.value)}
+                >
                   <option value="">默认模型</option>
                   {models.data?.models?.map((model) => (
                     <option key={model.name} value={model.name}>
@@ -322,10 +407,14 @@ export function ChatPage() {
                     </option>
                   ))}
                 </select>
-                <ExecutionModeToggle value={executionMode} disabled={isRunning} onChange={setExecutionMode} />
+                <ExecutionModeToggle
+                  value={executionMode}
+                  disabled={isRunning}
+                  onChange={setExecutionMode}
+                />
                 <button
                   type="button"
-                  className={`send-btn${isRunning ? " stop" : ""}`}
+                  className={isRunning ? "send-btn stop" : "send-btn"}
                   aria-label={isRunning ? "暂停生成" : "发送消息"}
                   title={isRunning ? "暂停生成" : "发送消息"}
                   onClick={() => {
@@ -335,8 +424,10 @@ export function ChatPage() {
                 >
                   {isRunning ? (
                     <SquareIcon size={16} />
+                  ) : remoteMessages.isFetching ? (
+                    <Loader2Icon size={16} className="spin" />
                   ) : (
-                    remoteMessages.isFetching ? <Loader2Icon size={16} className="spin" /> : <SendIcon size={16} />
+                    <SendIcon size={16} />
                   )}
                 </button>
               </div>
@@ -344,6 +435,195 @@ export function ChatPage() {
           </div>
         </div>
       </div>
+
+      {exportDialogOpen ? (
+        <div
+          className="modal-backdrop export-modal-backdrop"
+          role="presentation"
+          onMouseDown={() => {
+            if (!exportDocx.isPending) setExportDialogOpen(false);
+          }}
+        >
+          <div
+            className="export-modal conversation-export-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="conversation-export-modal-title"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div>
+                <span>Word 导出</span>
+                <h2 id="conversation-export-modal-title">导出对话记录</h2>
+                <p>导出前可调整正文、标题和段落格式。</p>
+              </div>
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="关闭导出设置"
+                disabled={exportDocx.isPending}
+                onClick={() => setExportDialogOpen(false)}
+              >
+                <XIcon size={17} />
+              </button>
+            </div>
+
+            <div className="export-modal-body">
+              <section className="export-section">
+                <div className="export-section-head">
+                  <div>
+                    <h3>导出内容</h3>
+                    <p>
+                      当前对话中的 {messages.length} 条消息将合并为一个 Word
+                      文件。
+                    </p>
+                  </div>
+                </div>
+
+                <details className="export-word-settings" open>
+                  <summary>
+                    <span>
+                      <strong>Word 格式设置</strong>
+                      <small>
+                        {wordFormatCustomized
+                          ? "已启用手动设置"
+                          : "使用当前默认导出格式"}
+                      </small>
+                    </span>
+                    <ChevronDownIcon size={17} aria-hidden="true" />
+                  </summary>
+                  <div className="export-word-settings-body">
+                    <p>设置将应用于本次对话导出的正文、标题和段落。</p>
+                    <div className="export-word-settings-grid">
+                      <label>
+                        <span>正文字体</span>
+                        <select
+                          value={wordFormat.bodyFont}
+                          disabled={exportDocx.isPending}
+                          onChange={(event) =>
+                            updateWordFormat("bodyFont", event.target.value)
+                          }
+                        >
+                          {WORD_FONT_OPTIONS.map((font) => (
+                            <option key={font} value={font}>
+                              {font}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>正文字号</span>
+                        <select
+                          value={wordFormat.bodyFontSizePt}
+                          disabled={exportDocx.isPending}
+                          onChange={(event) =>
+                            updateWordFormat(
+                              "bodyFontSizePt",
+                              Number(event.target.value),
+                            )
+                          }
+                        >
+                          <option value={10.5}>五号（10.5 磅）</option>
+                          <option value={12}>小四（12 磅）</option>
+                          <option value={14}>四号（14 磅）</option>
+                          <option value={15}>小三（15 磅）</option>
+                          <option value={16}>三号（16 磅）</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>行间距</span>
+                        <select
+                          value={wordFormat.lineSpacing}
+                          disabled={exportDocx.isPending}
+                          onChange={(event) =>
+                            updateWordFormat(
+                              "lineSpacing",
+                              Number(event.target.value),
+                            )
+                          }
+                        >
+                          <option value={1}>单倍行距</option>
+                          <option value={1.25}>1.25 倍行距</option>
+                          <option value={1.5}>1.5 倍行距</option>
+                          <option value={2}>2 倍行距</option>
+                        </select>
+                      </label>
+                      <label>
+                        <span>标题字体</span>
+                        <select
+                          value={wordFormat.headingFont}
+                          disabled={exportDocx.isPending}
+                          onChange={(event) =>
+                            updateWordFormat("headingFont", event.target.value)
+                          }
+                        >
+                          {WORD_FONT_OPTIONS.map((font) => (
+                            <option key={font} value={font}>
+                              {font}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        <span>标题起始等级</span>
+                        <select
+                          value={wordFormat.headingStartLevel}
+                          disabled={exportDocx.isPending}
+                          onChange={(event) =>
+                            updateWordFormat(
+                              "headingStartLevel",
+                              Number(event.target.value),
+                            )
+                          }
+                        >
+                          <option value={1}>一级标题</option>
+                          <option value={2}>二级标题</option>
+                          <option value={3}>三级标题</option>
+                        </select>
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      className="export-word-settings-reset"
+                      disabled={exportDocx.isPending || !wordFormatCustomized}
+                      onClick={() => {
+                        setWordFormat({ ...DEFAULT_WORD_FORMAT });
+                        setWordFormatCustomized(false);
+                      }}
+                    >
+                      <RotateCcwIcon size={14} />
+                      恢复默认格式
+                    </button>
+                  </div>
+                </details>
+              </section>
+            </div>
+
+            <div className="export-modal-foot">
+              <span className={exportDocx.isError ? "export-error" : undefined}>
+                {exportDocx.isError
+                  ? exportDocx.error instanceof Error
+                    ? exportDocx.error.message
+                    : "导出失败，请稍后重试。"
+                  : "确认格式后开始生成 Word 文件"}
+              </span>
+              <button
+                type="button"
+                className="primary-btn"
+                disabled={exportDocx.isPending}
+                onClick={() => exportDocx.mutate(wordFormat)}
+              >
+                {exportDocx.isPending ? (
+                  <Loader2Icon size={14} className="spin" />
+                ) : (
+                  <DownloadIcon size={14} />
+                )}
+                {exportDocx.isPending ? "导出中" : "导出 Word"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

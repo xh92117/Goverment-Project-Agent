@@ -191,7 +191,12 @@ def build_markdown_docx(
     )
 
 
-def build_conversation_docx(title: str, messages: list[Any]) -> bytes:
+def build_conversation_docx(
+    title: str,
+    messages: list[Any],
+    *,
+    format_options: DocxFormatOptions | None = None,
+) -> bytes:
     """Build a formatted proposal DOCX from chat messages."""
 
     document_title = title or "申报对话"
@@ -210,7 +215,13 @@ def build_conversation_docx(title: str, messages: list[Any]) -> bytes:
 
     _append_cited_evidence_images(blocks, list(dict.fromkeys(cited_evidence_ids)))
 
-    return _build_docx_package(document_title, _normalize_headings(blocks), base_dir=None)
+    heading_start_level = format_options.heading_start_level if format_options else 1
+    return _build_docx_package(
+        document_title,
+        _normalize_headings(blocks, heading_start_level=heading_start_level),
+        base_dir=None,
+        format_options=format_options,
+    )
 
 
 def docx_media_type() -> str:
@@ -326,13 +337,7 @@ def _prepare_evidence_citations(markdown: str) -> tuple[str, list[str]]:
 def _append_cited_evidence_images(blocks: list[MarkdownBlock], evidence_ids: list[str]) -> None:
     if not evidence_ids:
         return
-    embedded_ids = {
-        parsed[1]
-        for block in blocks
-        if isinstance(block, ImageBlock)
-        for parsed in [_parse_evidence_uri(block.target)]
-        if parsed is not None
-    }
+    embedded_ids = {parsed[1] for block in blocks if isinstance(block, ImageBlock) for parsed in [_parse_evidence_uri(block.target)] if parsed is not None}
     attachment_blocks: list[ImageBlock] = []
     for evidence_id in evidence_ids:
         if evidence_id in embedded_ids:
@@ -490,16 +495,13 @@ def _run(
         "<w:r><w:rPr>"
         f'<w:rFonts w:ascii="{_escape(ascii_font)}" w:hAnsi="{_escape(ascii_font)}" '
         f'w:eastAsia="{_escape(east_asia_font)}" w:cs="{_escape(ascii_font)}"/>'
-        f"{bold_xml}{italic_xml}<w:sz w:val=\"{size}\"/><w:szCs w:val=\"{size}\"/>"
-        f"</w:rPr><w:t xml:space=\"preserve\">{_escape(text)}</w:t></w:r>"
+        f'{bold_xml}{italic_xml}<w:sz w:val="{size}"/><w:szCs w:val="{size}"/>'
+        f'</w:rPr><w:t xml:space="preserve">{_escape(text)}</w:t></w:r>'
     )
 
 
 def _math_run(latex: str) -> str:
-    return (
-        "<m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr>"
-        f"<m:t>{_escape(_cleanup_math_text(latex))}</m:t></m:r>"
-    )
+    return f'<m:r><m:rPr><m:sty m:val="p"/></m:rPr><m:t>{_escape(_cleanup_math_text(latex))}</m:t></m:r>'
 
 
 def _math_xml(latex: str) -> str:
@@ -509,7 +511,7 @@ def _math_xml(latex: str) -> str:
     cursor = 0
     for match in pattern.finditer(text):
         if match.start() > cursor:
-            parts.append(_math_run(text[cursor:match.start()]))
+            parts.append(_math_run(text[cursor : match.start()]))
         base = _cleanup_math_text(match.group(1))
         script = _cleanup_math_text(match.group(3) or match.group(4) or "")
         if base and script:
@@ -542,12 +544,7 @@ def _cleanup_math_text(text: str) -> str:
 def _math_script(base: str, script: str, *, subscript: bool) -> str:
     tag = "sSub" if subscript else "sSup"
     script_tag = "sub" if subscript else "sup"
-    return (
-        f"<m:{tag}><m:{tag}Pr/>"
-        f"<m:e>{_math_run(base)}</m:e>"
-        f"<m:{script_tag}>{_math_run(script)}</m:{script_tag}>"
-        f"</m:{tag}>"
-    )
+    return f"<m:{tag}><m:{tag}Pr/><m:e>{_math_run(base)}</m:e><m:{script_tag}>{_math_run(script)}</m:{script_tag}></m:{tag}>"
 
 
 def _runs_with_inline_markdown(text: str, *, size: int, east_asia_font: str, ascii_font: str) -> str:
@@ -555,7 +552,7 @@ def _runs_with_inline_markdown(text: str, *, size: int, east_asia_font: str, asc
     cursor = 0
     for match in _INLINE_MATH_RE.finditer(text):
         if match.start() > cursor:
-            parts.append(_runs_without_math(text[cursor:match.start()], size=size, east_asia_font=east_asia_font, ascii_font=ascii_font))
+            parts.append(_runs_without_math(text[cursor : match.start()], size=size, east_asia_font=east_asia_font, ascii_font=ascii_font))
         token = match.group(0)
         latex = token[1:-1] if token.startswith("$") else token[2:-2]
         parts.append(f"<m:oMath>{_math_xml(latex)}</m:oMath>")
@@ -570,7 +567,7 @@ def _runs_without_math(text: str, *, size: int, east_asia_font: str, ascii_font:
     cursor = 0
     for match in _INLINE_MARKDOWN_RE.finditer(text):
         if match.start() > cursor:
-            parts.append(_run(text[cursor:match.start()], size=size, east_asia_font=east_asia_font, ascii_font=ascii_font))
+            parts.append(_run(text[cursor : match.start()], size=size, east_asia_font=east_asia_font, ascii_font=ascii_font))
         if match.group(2) is not None:
             parts.append(_run(match.group(2), size=size, east_asia_font=east_asia_font, ascii_font=ascii_font))
         elif match.group(3) is not None:
@@ -638,11 +635,7 @@ def _list_paragraph(
     line_spacing = format_options.line_spacing_twips if format_options else 290
     body_font = format_options.body_font if format_options else _FONT_BODY_EAST_ASIA
     body_size = format_options.body_size_half_points if format_options else _BODY_SIZE
-    props = (
-        f'<w:numPr><w:ilvl w:val="0"/><w:numId w:val="{num_id}"/></w:numPr>'
-        f'<w:spacing w:line="{line_spacing}" w:lineRule="auto" w:after="80"/>'
-        '<w:ind w:left="540" w:hanging="280"/>'
-    )
+    props = f'<w:numPr><w:ilvl w:val="0"/><w:numId w:val="{num_id}"/></w:numPr><w:spacing w:line="{line_spacing}" w:lineRule="auto" w:after="80"/><w:ind w:left="540" w:hanging="280"/>'
     runs = _runs_with_inline_math(
         block.text,
         size=body_size,
@@ -661,11 +654,7 @@ def _heading_paragraph(
     ilvl = level - 1
     before, after = _HEADING_SPACING.get(level, (80, 40))
     size = _HEADING_SIZES.get(level, _BODY_SIZE)
-    props = (
-        f'<w:pStyle w:val="{style_id}"/>'
-        f'<w:numPr><w:ilvl w:val="{ilvl}"/><w:numId w:val="1"/></w:numPr>'
-        f'<w:spacing w:line="320" w:lineRule="auto" w:before="{before}" w:after="{after}"/>'
-    )
+    props = f'<w:pStyle w:val="{style_id}"/><w:numPr><w:ilvl w:val="{ilvl}"/><w:numId w:val="1"/></w:numPr><w:spacing w:line="320" w:lineRule="auto" w:before="{before}" w:after="{after}"/>'
     heading_font = format_options.heading_font if format_options else _FONT_HEADING_EAST_ASIA
     body_font = format_options.body_font if format_options else _FONT_BODY_EAST_ASIA
     if format_options is not None or block.kind in {"h1", "h2"}:
@@ -720,12 +709,12 @@ def _table(
             cell_props = (
                 f'<w:tcW w:w="{width}" w:type="dxa"/>'
                 '<w:vAlign w:val="center"/>'
-                '<w:tcMar>'
+                "<w:tcMar>"
                 f'<w:top w:w="{_TABLE_CELL_MARGIN_TOP}" w:type="dxa"/>'
                 f'<w:bottom w:w="{_TABLE_CELL_MARGIN_BOTTOM}" w:type="dxa"/>'
                 f'<w:start w:w="{_TABLE_CELL_MARGIN_START}" w:type="dxa"/>'
                 f'<w:end w:w="{_TABLE_CELL_MARGIN_END}" w:type="dxa"/>'
-                '</w:tcMar>'
+                "</w:tcMar>"
                 f"{fill}"
             )
             cells.append(f"<w:tc><w:tcPr>{cell_props}</w:tcPr>{paragraph}</w:tc>")
@@ -739,13 +728,7 @@ def _table(
         '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
         '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>'
     )
-    props = (
-        '<w:tblPr>'
-        '<w:tblLayout w:type="fixed"/>'
-        f'<w:tblInd w:w="{_TABLE_INDENT_DXA}" w:type="dxa"/>'
-        f'<w:tblW w:w="{_TABLE_WIDTH_DXA}" w:type="dxa"/>'
-        f"{borders}</w:tblPr>"
-    )
+    props = f'<w:tblPr><w:tblLayout w:type="fixed"/><w:tblInd w:w="{_TABLE_INDENT_DXA}" w:type="dxa"/><w:tblW w:w="{_TABLE_WIDTH_DXA}" w:type="dxa"/>{borders}</w:tblPr>'
     return f"<w:tbl>{props}<w:tblGrid>{grid}</w:tblGrid>{''.join(rows)}</w:tbl>"
 
 
@@ -783,10 +766,7 @@ def _is_short_table_value(text: str) -> bool:
 
 
 def _equation_paragraph(latex: str) -> str:
-    return (
-        "<m:oMathPara><m:oMathParaPr><m:jc m:val=\"center\"/></m:oMathParaPr>"
-        f"<m:oMath>{_math_xml(latex)}</m:oMath></m:oMathPara>"
-    )
+    return f'<m:oMathPara><m:oMathParaPr><m:jc m:val="center"/></m:oMathParaPr><m:oMath>{_math_xml(latex)}</m:oMath></m:oMathPara>'
 
 
 def _load_image(block: ImageBlock, *, base_dir: Path | None, index: int) -> DocxImage | None:
@@ -873,12 +853,7 @@ def _parse_evidence_uri(target: str) -> tuple[str, str] | None:
         return None
     applicant_id = unquote(applicant_text).strip()
     evidence_id = unquote(evidence_text).strip()
-    if (
-        not applicant_id
-        or len(applicant_id) > 128
-        or any(character in applicant_id for character in {"/", "\\", "\x00"})
-        or _EVIDENCE_ID_RE.fullmatch(evidence_id) is None
-    ):
+    if not applicant_id or len(applicant_id) > 128 or any(character in applicant_id for character in {"/", "\\", "\x00"}) or _EVIDENCE_ID_RE.fullmatch(evidence_id) is None:
         return None
     return applicant_id, evidence_id
 
@@ -902,7 +877,7 @@ def _resolve_evidence_image_path(target: str) -> Path | None:
 def _clean_image_target(target: str) -> str:
     value = target.strip()
     if value.startswith("<") and ">" in value:
-        return value[1:value.index(">")].strip()
+        return value[1 : value.index(">")].strip()
     if value.startswith(("'", '"')):
         quote_char = value[0]
         end = value.find(quote_char, 1)
@@ -921,25 +896,21 @@ def _image_paragraph(image: DocxImage, index: int) -> str:
         f'<wp:docPr id="{index}" name="图片 {index}" descr="{description}"/>'
         '<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>'
         '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
-        '<pic:pic><pic:nvPicPr>'
+        "<pic:pic><pic:nvPicPr>"
         f'<pic:cNvPr id="{index}" name="{description}"/>'
-        '<pic:cNvPicPr/></pic:nvPicPr><pic:blipFill>'
+        "<pic:cNvPicPr/></pic:nvPicPr><pic:blipFill>"
         f'<a:blip r:embed="{image.rid}"/>'
-        '<a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
+        "<a:stretch><a:fillRect/></a:stretch></pic:blipFill>"
         '<pic:spPr><a:xfrm><a:off x="0" y="0"/>'
         f'<a:ext cx="{image.width_emu}" cy="{image.height_emu}"/>'
         '</a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>'
-        '</pic:pic></a:graphicData></a:graphic></wp:inline>'
-        '</w:drawing></w:r></w:p>'
+        "</pic:pic></a:graphicData></a:graphic></wp:inline>"
+        "</w:drawing></w:r></w:p>"
     )
 
 
 def _document_xml(body: str) -> str:
-    sect = (
-        '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
-        '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" '
-        'w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>'
-    )
+    sect = '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>'
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
@@ -955,13 +926,7 @@ def _document_xml(body: str) -> str:
 def _style_run_props(east_asia_font: str, size: int, *, ascii_font: str | None = None, bold: bool = False) -> str:
     ascii_font = ascii_font or east_asia_font
     bold_xml = "<w:b/><w:bCs/>" if bold else ""
-    return (
-        "<w:rPr>"
-        f'<w:rFonts w:ascii="{_escape(ascii_font)}" w:hAnsi="{_escape(ascii_font)}" '
-        f'w:eastAsia="{_escape(east_asia_font)}" w:cs="{_escape(ascii_font)}"/>'
-        f'{bold_xml}<w:sz w:val="{size}"/><w:szCs w:val="{size}"/>'
-        "</w:rPr>"
-    )
+    return f'<w:rPr><w:rFonts w:ascii="{_escape(ascii_font)}" w:hAnsi="{_escape(ascii_font)}" w:eastAsia="{_escape(east_asia_font)}" w:cs="{_escape(ascii_font)}"/>{bold_xml}<w:sz w:val="{size}"/><w:szCs w:val="{size}"/></w:rPr>'
 
 
 def _heading_style(
@@ -979,7 +944,7 @@ def _heading_style(
         f'<w:style w:type="paragraph" w:styleId="{style_id}">'
         f'<w:name w:val="{name}"/><w:basedOn w:val="Normal"/><w:next w:val="Normal"/>'
         '<w:uiPriority w:val="9"/><w:qFormat/>'
-        '<w:pPr><w:keepNext/><w:keepLines/>'
+        "<w:pPr><w:keepNext/><w:keepLines/>"
         f'<w:spacing w:line="320" w:lineRule="auto" w:before="{before}" w:after="{after}"/>'
         f'<w:outlineLvl w:val="{outline_level}"/></w:pPr>'
         f"{_style_run_props(east_asia_font, size, ascii_font=ascii_font, bold=bold)}</w:style>"
@@ -994,21 +959,21 @@ def _styles_xml(format_options: DocxFormatOptions | None = None) -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-        '<w:docDefaults><w:rPrDefault>'
-        f'{_style_run_props(body_font, body_size, ascii_font=_FONT_BODY_ASCII)}'
-        '</w:rPrDefault><w:pPrDefault>'
+        "<w:docDefaults><w:rPrDefault>"
+        f"{_style_run_props(body_font, body_size, ascii_font=_FONT_BODY_ASCII)}"
+        "</w:rPrDefault><w:pPrDefault>"
         f'<w:pPr><w:jc w:val="both"/><w:spacing w:line="{line_spacing}" w:lineRule="auto"/></w:pPr>'
-        '</w:pPrDefault></w:docDefaults>'
+        "</w:pPrDefault></w:docDefaults>"
         '<w:style w:type="paragraph" w:default="1" w:styleId="Normal">'
         '<w:name w:val="Normal"/><w:qFormat/>'
         f'<w:pPr><w:jc w:val="both"/><w:spacing w:line="{line_spacing}" w:lineRule="auto"/></w:pPr>'
-        f'{_style_run_props(body_font, body_size, ascii_font=_FONT_BODY_ASCII)}</w:style>'
-        f'{_heading_style("Heading1", "heading 1", 1, heading_font)}'
-        f'{_heading_style("Heading2", "heading 2", 2, heading_font)}'
-        f'{_heading_style("Heading3", "heading 3", 3, heading_font if format_options else body_font)}'
-        f'{_heading_style("Heading4", "heading 4", 4, heading_font if format_options else body_font)}'
-        f'{_heading_style("Heading5", "heading 5", 5, heading_font if format_options else body_font)}'
-        f'{_heading_style("Heading6", "heading 6", 6, heading_font if format_options else body_font)}'
+        f"{_style_run_props(body_font, body_size, ascii_font=_FONT_BODY_ASCII)}</w:style>"
+        f"{_heading_style('Heading1', 'heading 1', 1, heading_font)}"
+        f"{_heading_style('Heading2', 'heading 2', 2, heading_font)}"
+        f"{_heading_style('Heading3', 'heading 3', 3, heading_font if format_options else body_font)}"
+        f"{_heading_style('Heading4', 'heading 4', 4, heading_font if format_options else body_font)}"
+        f"{_heading_style('Heading5', 'heading 5', 5, heading_font if format_options else body_font)}"
+        f"{_heading_style('Heading6', 'heading 6', 6, heading_font if format_options else body_font)}"
         "</w:styles>"
     )
 
@@ -1063,11 +1028,7 @@ def _content_types_xml(images: list[DocxImage]) -> str:
         "gif": "image/gif",
         "bmp": "image/bmp",
     }
-    image_xml = "".join(
-        f'<Default Extension="{extension}" ContentType="{content_type}"/>'
-        for extension, content_type in image_defaults.items()
-        if any(image.extension == extension for image in images)
-    )
+    image_xml = "".join(f'<Default Extension="{extension}" ContentType="{content_type}"/>' for extension, content_type in image_defaults.items() if any(image.extension == extension for image in images))
     return (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -1113,17 +1074,8 @@ def _document_rels_xml(images: list[DocxImage]) -> str:
         'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" '
         'Target="numbering.xml"/>'
     )
-    relationships += "".join(
-        f'<Relationship Id="{image.rid}" '
-        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
-        f'Target="media/{image.filename}"/>'
-        for image in images
-    )
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
-        f"{relationships}</Relationships>"
-    )
+    relationships += "".join(f'<Relationship Id="{image.rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/{image.filename}"/>' for image in images)
+    return f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{relationships}</Relationships>'
 
 
 def _core_xml(title: str) -> str:

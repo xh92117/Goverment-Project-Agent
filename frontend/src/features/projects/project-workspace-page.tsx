@@ -48,6 +48,10 @@ import {
 } from "@/features/chat/thread-title";
 import { useExecutionMode } from "@/features/chat/use-execution-mode";
 import {
+  DEFAULT_WORD_FORMAT,
+  WORD_FONT_OPTIONS,
+} from "@/features/exports/word-format";
+import {
   deleteProjectFile,
   downloadProjectFile,
   exportProjectFilesDocx,
@@ -86,16 +90,6 @@ const RIGHT_SIDEBAR_COLLAPSED_STORAGE_KEY = "project-sidebar-right-collapsed";
 const RIGHT_SIDEBAR_DEFAULT_WIDTH = 340;
 const RIGHT_SIDEBAR_MIN_WIDTH = 280;
 const RIGHT_SIDEBAR_MAX_WIDTH = 620;
-
-const DEFAULT_WORD_FORMAT: WordFormatOptions = {
-  bodyFont: "仿宋",
-  bodyFontSizePt: 12,
-  lineSpacing: 1.5,
-  headingFont: "黑体",
-  headingStartLevel: 1,
-};
-
-const WORD_FONT_OPTIONS = ["仿宋", "宋体", "黑体", "楷体", "微软雅黑"];
 
 function clampRightSidebarWidth(width: number) {
   return Math.min(

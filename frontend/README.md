@@ -119,6 +119,9 @@ src/
 
 - The default entry is the government declaration assistant, not the generic
   base chat route.
+- Conversation export opens a Word-format dialog before downloading. Users can
+  set body font and size, line spacing, heading font, and heading start level;
+  the selected values are sent to the server-side DOCX renderer.
 - Knowledge-base content is managed through the workspace knowledge area and
   LLM-Wiki index files. Both index-only rebuilds and incoming-file organization
   plus rebuilds use background-job APIs. The page reloads persisted server

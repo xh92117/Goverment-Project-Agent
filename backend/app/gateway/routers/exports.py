@@ -9,7 +9,7 @@ from fastapi import APIRouter
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from app.gateway.docx_export import build_conversation_docx, docx_media_type
+from app.gateway.docx_export import DocxFormatOptions, build_conversation_docx, docx_media_type
 
 router = APIRouter(prefix="/api/exports", tags=["exports"])
 
@@ -19,9 +19,18 @@ class ExportMessage(BaseModel):
     content: str = Field(default="")
 
 
+class ConversationWordFormatOptions(BaseModel):
+    body_font: str = Field(default="仿宋", min_length=1, max_length=40)
+    body_font_size_pt: float = Field(default=12.0, ge=8.0, le=24.0)
+    line_spacing: float = Field(default=1.5, ge=1.0, le=3.0)
+    heading_font: str = Field(default="黑体", min_length=1, max_length=40)
+    heading_start_level: int = Field(default=1, ge=1, le=3)
+
+
 class ConversationDocxRequest(BaseModel):
     title: str = Field(default="申报对话")
     messages: list[ExportMessage] = Field(default_factory=list)
+    word_format: ConversationWordFormatOptions | None = None
 
 
 @dataclass(frozen=True)
@@ -80,10 +89,7 @@ def _run(text: str, *, size: int, font: str, bold: bool = False) -> str:
     bold_xml = "<w:b/>" if bold else ""
     east_asia = _escape(font)
     return (
-        "<w:r><w:rPr>"
-        f'<w:rFonts w:ascii="{east_asia}" w:hAnsi="{east_asia}" w:eastAsia="{east_asia}" w:cs="{east_asia}"/>'
-        f"{bold_xml}<w:sz w:val=\"{size}\"/><w:szCs w:val=\"{size}\"/>"
-        f"</w:rPr><w:t xml:space=\"preserve\">{_escape(text)}</w:t></w:r>"
+        f'<w:r><w:rPr><w:rFonts w:ascii="{east_asia}" w:hAnsi="{east_asia}" w:eastAsia="{east_asia}" w:cs="{east_asia}"/>{bold_xml}<w:sz w:val="{size}"/><w:szCs w:val="{size}"/></w:rPr><w:t xml:space="preserve">{_escape(text)}</w:t></w:r>'
     )
 
 
@@ -106,16 +112,8 @@ def _paragraph(spec: ParagraphSpec) -> str:
 
 def _document_xml(paragraphs: list[ParagraphSpec]) -> str:
     body = "".join(_paragraph(item) for item in paragraphs)
-    sect = (
-        '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/>'
-        '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/>'
-        "</w:sectPr>"
-    )
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-        f"<w:body>{body}{sect}</w:body></w:document>"
-    )
+    sect = '<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="720" w:footer="720" w:gutter="0"/></w:sectPr>'
+    return f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{body}{sect}</w:body></w:document>'
 
 
 def _content_types_xml() -> str:
@@ -143,10 +141,7 @@ def _rels_xml() -> str:
 
 
 def _document_rels_xml() -> str:
-    return (
-        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
-        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'
-    )
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>'
 
 
 def _core_xml(title: str) -> str:
@@ -176,13 +171,18 @@ def _app_xml() -> str:
     )
 
 
-def _build_docx(title: str, messages: list[ExportMessage]) -> bytes:
-    return build_conversation_docx(title, messages)
+def _build_docx(
+    title: str,
+    messages: list[ExportMessage],
+    word_format: ConversationWordFormatOptions | None = None,
+) -> bytes:
+    format_options = DocxFormatOptions(**word_format.model_dump()) if word_format else None
+    return build_conversation_docx(title, messages, format_options=format_options)
 
 
 @router.post("/conversation.docx")
 async def export_conversation_docx(request: ConversationDocxRequest) -> Response:
-    data = _build_docx(request.title, request.messages)
+    data = _build_docx(request.title, request.messages, request.word_format)
     filename = re.sub(r'[\\/:*?"<>|]+', "_", request.title or "conversation")[:80] or "conversation"
     encoded_filename = quote(f"{filename}.docx")
     return Response(

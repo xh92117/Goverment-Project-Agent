@@ -81,6 +81,32 @@ def test_manual_word_format_changes_fonts_spacing_size_and_heading_level() -> No
     assert 'w:eastAsia="楷体"' in styles_xml
 
 
+def test_conversation_export_applies_manual_word_format() -> None:
+    data = build_conversation_docx(
+        "Conversation",
+        [{"role": "assistant", "content": "# Analysis\n\nFormatted body."}],
+        format_options=DocxFormatOptions(
+            body_font="宋体",
+            body_font_size_pt=14,
+            line_spacing=2,
+            heading_font="楷体",
+            heading_start_level=2,
+        ),
+    )
+
+    with ZipFile(io.BytesIO(data)) as archive:
+        document_xml = archive.read("word/document.xml").decode("utf-8")
+        styles_xml = archive.read("word/styles.xml").decode("utf-8")
+
+    assert '<w:pStyle w:val="Heading2"/>' in document_xml
+    assert 'w:eastAsia="宋体"' in document_xml
+    assert 'w:sz w:val="28"' in document_xml
+    assert 'w:line="480"' in document_xml
+    assert 'w:eastAsia="楷体"' in document_xml
+    assert 'w:eastAsia="宋体"' in styles_xml
+    assert 'w:eastAsia="楷体"' in styles_xml
+
+
 def test_verified_evidence_uri_is_embedded_in_docx() -> None:
     evidence_id = _create_evidence(verified=True)
 
@@ -119,11 +145,7 @@ def test_verified_evidence_citation_adds_one_attachment_and_hides_internal_id() 
 
     data = build_markdown_docx(
         "Proposal",
-        (
-            "The applicant is legally registered. "
-            f"【Knowledge Base: Business License | evidence:{evidence_id}】\n\n"
-            f"The same evidence is cited again: evidence:{evidence_id}."
-        ),
+        (f"The applicant is legally registered. 【Knowledge Base: Business License | evidence:{evidence_id}】\n\nThe same evidence is cited again: evidence:{evidence_id}."),
     )
 
     names, document_xml = _package_parts(data)

@@ -1,4 +1,7 @@
+import type { WordFormatOptions } from "@/features/exports/word-format";
 import { apiFetch, apiJson, jsonBody } from "@/shared/api/client";
+
+export type { WordFormatOptions } from "@/features/exports/word-format";
 
 export interface ProjectRecord {
   project_id: string;
@@ -254,14 +257,6 @@ export async function downloadProjectFile(
   );
   if (!response.ok) throw new Error(`下载失败：HTTP ${response.status}`);
   return response.blob();
-}
-
-export interface WordFormatOptions {
-  bodyFont: string;
-  bodyFontSizePt: number;
-  lineSpacing: number;
-  headingFont: string;
-  headingStartLevel: number;
 }
 
 export async function exportProjectFilesDocx(
