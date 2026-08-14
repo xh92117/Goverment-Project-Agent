@@ -150,7 +150,7 @@ def test_server_compose_has_stable_host_path_defaults():
 
     assert "${AGENT_BASE_CONFIG_PATH:-../config.yaml}:/app/backend/config.yaml" in gateway_section
     assert "${AGENT_BASE_EXTENSIONS_CONFIG_PATH:-../extensions_config.json}:/app/backend/extensions_config.json:ro" in gateway_section
-    assert "${AGENT_BASE_HOME:-/srv/agent-base}:/app/backend/.agent-base" in gateway_section
+    assert "${AGENT_BASE_HOME:-/srv/agent-base/data}:/app/backend/.agent-base" in gateway_section
     assert "${AGENT_BASE_KNOWLEDGE_ROOT:-/srv/agent-base/public-knowledge}:/srv/agent-base/public-knowledge" in gateway_section
     assert "${AGENT_BASE_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock" in gateway_section
 
@@ -159,6 +159,7 @@ def test_server_compose_wrapper_owns_paths_and_persistent_secrets():
     wrapper = _read("scripts/server-compose.sh")
 
     assert 'SERVER_STATE_ROOT="${AGENT_BASE_SERVER_STATE_ROOT:-/srv/agent-base}"' in wrapper
+    assert 'export AGENT_BASE_HOME="${AGENT_BASE_HOME:-$SERVER_STATE_ROOT/data}"' in wrapper
     assert 'export AGENT_BASE_KNOWLEDGE_ROOT="${AGENT_BASE_KNOWLEDGE_ROOT:-$SERVER_STATE_ROOT/public-knowledge}"' in wrapper
     assert '"$AGENT_BASE_HOME/.better-auth-secret"' in wrapper
     assert '"$AGENT_BASE_HOME/.internal-auth-token"' in wrapper

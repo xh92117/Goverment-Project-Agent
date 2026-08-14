@@ -73,9 +73,9 @@ Goverment-Project-Agent/
 
 ### 2.2 服务器 Docker 固定路径
 
-专用 Linux 服务器统一使用以下持久化契约：宿主机状态根目录为 `/srv/agent-base`，公共知识库为 `/srv/agent-base/public-knowledge`；Gateway 容器内的公共知识库也固定挂载到 `/srv/agent-base/public-knowledge`，不得放到受保护的 `/app` 源码树内。
+专用 Linux 服务器统一使用以下持久化契约：服务器数据根目录为 `/srv/agent-base`，其中运行状态位于 `/srv/agent-base/data`，公共知识库位于 `/srv/agent-base/public-knowledge`；Gateway 容器内的公共知识库也固定挂载到 `/srv/agent-base/public-knowledge`，不得放到受保护的 `/app` 源码树内。
 
-服务器的启动、停止、日志和状态查询统一使用包装命令。包装脚本会补齐固定路径，并从 `/srv/agent-base/.better-auth-secret` 和 `/srv/agent-base/.internal-auth-token` 恢复密钥，不依赖当前 Shell 是否曾导出环境变量：
+服务器的启动、停止、日志和状态查询统一使用包装命令。包装脚本会补齐固定路径，并从 `/srv/agent-base/data/.better-auth-secret` 和 `/srv/agent-base/data/.internal-auth-token` 恢复密钥，不依赖当前 Shell 是否曾导出环境变量：
 
 ```bash
 make server-up

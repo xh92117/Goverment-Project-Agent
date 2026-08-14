@@ -53,7 +53,8 @@ AGENT_BASE_HOME/
 专用 Linux 服务器采用固定路径契约：
 
 ```text
-宿主机运行状态：/srv/agent-base
+宿主机数据根目录：/srv/agent-base
+宿主机运行状态：/srv/agent-base/data
 宿主机公共知识库：/srv/agent-base/public-knowledge
 Gateway 运行状态：/app/backend/.agent-base
 Gateway 公共知识库：/srv/agent-base/public-knowledge

@@ -164,7 +164,7 @@ http://127.0.0.1:9527
 
 ### 服务器 Docker 固定路径
 
-专用 Linux 服务器统一把运行数据放在 `/srv/agent-base`，公共知识库放在
+专用 Linux 服务器统一把运行状态放在 `/srv/agent-base/data`，公共知识库放在
 `/srv/agent-base/public-knowledge`。Gateway 容器内的公共知识库使用相同的 `/srv` 路径，
 不会再挂载到受保护的 `/app` 源码树。
 
