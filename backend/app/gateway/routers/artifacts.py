@@ -1,11 +1,14 @@
+import asyncio
 import logging
 import mimetypes
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
+from pydantic import BaseModel
 
 from app.gateway.authz import require_permission
 from app.gateway.path_utils import resolve_thread_virtual_path
@@ -22,6 +25,25 @@ ACTIVE_CONTENT_MIME_TYPES = {
 
 MAX_SKILL_ARCHIVE_MEMBER_BYTES = 16 * 1024 * 1024
 _SKILL_ARCHIVE_READ_CHUNK_SIZE = 64 * 1024
+MAX_LISTED_ARTIFACTS = 500
+_OUTPUTS_VIRTUAL_ROOT = "/mnt/user-data/outputs"
+
+
+class ArtifactListItem(BaseModel):
+    name: str
+    path: str
+    relative_path: str
+    size: int
+    updated_at: str
+    mime_type: str | None = None
+    download_url: str
+
+
+class ArtifactListResponse(BaseModel):
+    thread_id: str
+    artifacts: list[ArtifactListItem]
+    total: int
+    truncated: bool = False
 
 
 def _build_content_disposition(disposition_type: str, filename: str) -> str:
@@ -94,6 +116,65 @@ def _extract_file_from_skill_archive(zip_path: Path, internal_path: str) -> byte
             return None
     except (zipfile.BadZipFile, KeyError):
         return None
+
+
+def _scan_artifacts(thread_id: str, outputs_root: Path) -> ArtifactListResponse:
+    if not outputs_root.exists() or not outputs_root.is_dir():
+        return ArtifactListResponse(thread_id=thread_id, artifacts=[], total=0)
+
+    resolved_root = outputs_root.resolve()
+    found: list[tuple[float, ArtifactListItem]] = []
+    for candidate in resolved_root.rglob("*"):
+        try:
+            if candidate.is_symlink() or not candidate.is_file():
+                continue
+            actual_path = candidate.resolve()
+            relative_path = actual_path.relative_to(resolved_root).as_posix()
+            stat = actual_path.stat()
+        except (OSError, ValueError):
+            # Files can disappear while an agent is writing its output. Skip that
+            # entry and let the next panel refresh pick up the stable result.
+            continue
+
+        virtual_path = f"{_OUTPUTS_VIRTUAL_ROOT}/{relative_path}"
+        encoded_path = quote(virtual_path.lstrip("/"), safe="/")
+        encoded_thread_id = quote(thread_id, safe="")
+        mime_type, _ = mimetypes.guess_type(actual_path.name)
+        found.append(
+            (
+                stat.st_mtime,
+                ArtifactListItem(
+                    name=actual_path.name,
+                    path=virtual_path,
+                    relative_path=relative_path,
+                    size=stat.st_size,
+                    updated_at=datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+                    mime_type=mime_type,
+                    download_url=f"/api/threads/{encoded_thread_id}/artifacts/{encoded_path}?download=true",
+                ),
+            )
+        )
+
+    found.sort(key=lambda entry: (-entry[0], entry[1].relative_path))
+    total = len(found)
+    return ArtifactListResponse(
+        thread_id=thread_id,
+        artifacts=[item for _, item in found[:MAX_LISTED_ARTIFACTS]],
+        total=total,
+        truncated=total > MAX_LISTED_ARTIFACTS,
+    )
+
+
+@router.get(
+    "/threads/{thread_id}/artifacts",
+    response_model=ArtifactListResponse,
+    summary="List Thread Artifacts",
+    description="List downloadable files generated in the current thread output directory.",
+)
+@require_permission("threads", "read", owner_check=True)
+async def list_artifacts(thread_id: str, request: Request) -> ArtifactListResponse:
+    outputs_root = resolve_thread_virtual_path(thread_id, _OUTPUTS_VIRTUAL_ROOT)
+    return await asyncio.to_thread(_scan_artifacts, thread_id, outputs_root)
 
 
 @router.get(

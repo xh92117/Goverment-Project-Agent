@@ -122,6 +122,20 @@ request is pending. Reuse the shared defaults in
 `features/exports/word-format.ts` so project-file and conversation exports do
 not drift.
 
+Standalone chat also owns a collapsible right-side artifact panel backed by
+`GET /api/threads/{thread_id}/artifacts`. Query by the active thread ID, poll
+every two seconds only while that thread has a running agent task, invalidate
+the list when the run completes, and download through the server-provided URL
+with the authenticated API client. Keep the panel useful after a browser
+refresh by treating the filesystem-backed list as server state. Project file
+downloads must retain both `source=project` and `source=thread` paths; thread
+files include their `thread_id` query parameter.
+
+Standalone and project conversation headers must not render thread-ID or
+selected-model tags. Keep model selection in the composer because it is an
+execution control, while the header remains focused on user-facing context and
+actions.
+
 The existing knowledge-tree toolbar conditionally exposes batch evidence review
 actions, without restoring the removed image preview section. Only visible
 `needs_review` evidence whose index metadata has `extraction_status=completed`

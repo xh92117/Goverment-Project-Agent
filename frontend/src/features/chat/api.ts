@@ -51,6 +51,23 @@ export interface UploadList {
   files?: Array<{ filename: string; size?: number; content_type?: string }>;
 }
 
+export interface ThreadArtifact {
+  name: string;
+  path: string;
+  relative_path: string;
+  size: number;
+  updated_at: string;
+  mime_type?: string | null;
+  download_url: string;
+}
+
+export interface ThreadArtifactsResponse {
+  thread_id: string;
+  artifacts: ThreadArtifact[];
+  total: number;
+  truncated: boolean;
+}
+
 export const GOVERNMENT_PROJECT_ASSISTANT_ID = "government-project-declaration";
 
 function runtimeRecord(value: unknown): Record<string, unknown> {
@@ -182,6 +199,20 @@ export function uploadList(threadId: string) {
   return apiJson<UploadList>(
     `/api/threads/${encodeURIComponent(threadId)}/uploads/list`,
   );
+}
+
+export function listThreadArtifacts(threadId: string) {
+  return apiJson<ThreadArtifactsResponse>(
+    `/api/threads/${encodeURIComponent(threadId)}/artifacts`,
+  );
+}
+
+export async function downloadThreadArtifact(downloadUrl: string) {
+  const response = await apiFetch(downloadUrl);
+  if (!response.ok) {
+    throw new Error(`产物下载失败：HTTP ${response.status}`);
+  }
+  return response.blob();
 }
 
 export async function exportConversationDocx(input: {

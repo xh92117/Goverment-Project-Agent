@@ -22,6 +22,43 @@ def _make_request(query_string: bytes = b"") -> Request:
     return Request({"type": "http", "method": "GET", "path": "/", "headers": [], "query_string": query_string})
 
 
+def test_list_artifacts_returns_downloadable_thread_outputs(tmp_path, monkeypatch) -> None:
+    outputs_root = tmp_path / "outputs"
+    nested = outputs_root / "proposal_drafts" / "路基项目"
+    nested.mkdir(parents=True)
+    report_path = nested / "国内外研究现状.md"
+    report_path.write_text("# 研究现状", encoding="utf-8")
+    (outputs_root / "chart.png").write_bytes(b"png-data")
+
+    def resolve_artifact(_thread_id: str, virtual_path: str) -> Path:
+        normalized = virtual_path.lstrip("/")
+        prefix = "mnt/user-data/outputs"
+        if normalized == prefix:
+            return outputs_root
+        return outputs_root / normalized.removeprefix(prefix).lstrip("/")
+
+    monkeypatch.setattr(artifacts_router, "resolve_thread_virtual_path", resolve_artifact)
+    app = make_authed_test_app()
+    app.include_router(artifacts_router.router)
+
+    with TestClient(app) as client:
+        response = client.get("/api/threads/thread-1/artifacts")
+        payload = response.json()
+        report = next(item for item in payload["artifacts"] if item["name"] == report_path.name)
+        downloaded = client.get(report["download_url"])
+
+    assert response.status_code == 200, response.text
+    assert payload["thread_id"] == "thread-1"
+    assert payload["total"] == 2
+    assert payload["truncated"] is False
+    assert report["path"] == "/mnt/user-data/outputs/proposal_drafts/路基项目/国内外研究现状.md"
+    assert report["relative_path"] == "proposal_drafts/路基项目/国内外研究现状.md"
+    assert report["download_url"].endswith("?download=true")
+    assert downloaded.status_code == 200, downloaded.text
+    assert downloaded.content == "# 研究现状".encode()
+    assert downloaded.headers.get("content-disposition", "").startswith("attachment;")
+
+
 def test_get_artifact_reads_utf8_text_file_on_windows_locale(tmp_path, monkeypatch) -> None:
     artifact_path = tmp_path / "note.txt"
     text = "Curly quotes: \u201cutf8\u201d"

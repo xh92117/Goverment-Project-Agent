@@ -362,6 +362,39 @@ def test_project_file_write_supports_project_and_thread_sources(tmp_path, monkey
     assert (tmp_path / "thread-outputs" / "thread-1" / "thread-note.md").read_text(encoding="utf-8") == "# Thread"
 
 
+def test_project_file_download_supports_thread_outputs(tmp_path, monkeypatch):
+    class FakePaths(Paths):
+        def sandbox_outputs_dir(self, thread_id, user_id=None):
+            return tmp_path / "thread-outputs" / thread_id
+
+    client = _client(tmp_path, monkeypatch)
+    monkeypatch.setattr(projects, "get_paths", lambda: FakePaths(tmp_path))
+    with client:
+        project = client.post("/api/projects", json={"name": "Thread Download Project"}).json()
+        project_id = project["project_id"]
+        client.put(
+            f"/api/projects/{project_id}/files/write",
+            json={
+                "path": "reports/研究综述.md",
+                "source": "thread",
+                "thread_id": "thread-1",
+                "content": "# 线程产物",
+            },
+        )
+        downloaded = client.get(
+            f"/api/projects/{project_id}/files/download",
+            params={
+                "path": "reports/研究综述.md",
+                "source": "thread",
+                "thread_id": "thread-1",
+            },
+        )
+
+    assert downloaded.status_code == 200, downloaded.text
+    assert downloaded.content == "# 线程产物".encode()
+    assert "attachment" in downloaded.headers.get("content-disposition", "")
+
+
 def test_project_file_delete_supports_thread_sources(tmp_path, monkeypatch):
     class FakePaths(Paths):
         def sandbox_outputs_dir(self, thread_id, user_id=None):
